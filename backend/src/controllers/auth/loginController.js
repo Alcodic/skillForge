@@ -32,7 +32,7 @@ export const loginUser = async (req, res) => {
 
     //Generate JWT
     const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET_DEV, {
-      expiresIn: "1h",
+      expiresIn: "1d",
     });
 
     return res.json({
