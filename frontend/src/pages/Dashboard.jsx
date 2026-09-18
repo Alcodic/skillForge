@@ -1,5 +1,6 @@
 // import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import "./Dashboard.css";
 
 //Fundamental way
 // function Dashboard() {
@@ -80,16 +81,30 @@ function Dashboard() {
     return <h1>Loading dashboard...</h1>;
   }
   if (error) {
-    return <h1>Error: {error}</h1>;
+    return <h1>Error: {error.message}</h1>;
   }
-  // if (!dashboardData) {
-  //   return <h1>No dashboard data available.</h1>;
-  // }
-  return (
-    <div>
-      <h1>Dashboard</h1>
 
-      <p>Materials: {data.materials.length}</p>
+  if (data.materials.length === 0) {
+    return (
+      <div className="dashboard">
+        <div className="dashboard__content">
+          <h1 className="dashboard__title">Dashboard</h1>
+
+          <div className="dashboard__empty-state">
+            <h2>Start your learning journey</h2>
+            <p>You dont have any learning material yet.</p>
+            <button className="dashboard__button">Add Material</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="dashboard">
+      <div className="dashboard__content">
+        <h1 className="dashboard__title">Dashboard</h1>
+        <p>Materials: {data.materials.length}</p>
+      </div>
     </div>
   );
 }
