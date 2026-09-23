@@ -32,8 +32,29 @@ const LearningMaterialSchema = mongoose.Schema(
       enum: ["UPLOADING", "PROCESSING", "READY", "FAILED"],
       required: true,
     },
+
+    idempotencyKey: {
+      type: String,
+      trim: true,
+      maxlength: 128,
+    },
+
+    fileHash: {
+      type: String,
+      match: /^[a-f0-9]{64}$/,
+    },
   },
   { timestamps: true },
+);
+
+LearningMaterialSchema.index(
+  { userId: 1, idempotencyKey: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      idempotencyKey: { $exists: true },
+    },
+  },
 );
 
 const LearningMaterial = mongoose.model(

@@ -1,6 +1,9 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 function AuthForm({ mode }) {
+  const navigate = useNavigate();
+
   const isLogin = mode === "login";
 
   const [formData, setFormData] = useState({
@@ -37,6 +40,12 @@ function AuthForm({ mode }) {
 
     if (response.ok) {
       localStorage.setItem("token", data.token);
+
+      if (isLogin) {
+        navigate("/dashboard");
+      } else {
+        navigate("/login");
+      }
     }
 
     console.log("Form Submitted:", data);

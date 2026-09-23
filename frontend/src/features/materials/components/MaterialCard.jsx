@@ -1,6 +1,6 @@
 import { useNavigate } from "react-router-dom";
 
-function MaterialCard({ material }) {
+function MaterialCard({ material, onRetry }) {
   const navigate = useNavigate();
 
   const statusLabel = {
@@ -52,7 +52,10 @@ function MaterialCard({ material }) {
         )}
 
         {material.processingStatus === "FAILED" && (
-          <button className="rounded-lg border border-border px-4 py-2 text-sm font-medium">
+          <button
+            onClick={() => onRetry(material)}
+            className="rounded-lg border border-border px-4 py-2 text-sm font-medium"
+          >
             Retry
           </button>
         )}

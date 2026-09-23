@@ -41,3 +41,35 @@ export async function getMaterialById(materialId) {
   }
   return data.data;
 }
+
+export async function uploadMaterial({ title, file,idempotencyKey }) {
+  const token = localStorage.getItem("token");
+
+  
+
+  const formData = new FormData();
+
+  formData.append("title", title);
+  formData.append("file", file);
+
+  const response = await fetch("http://localhost:5001/api/materials", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Idempotency-Key": idempotencyKey,
+    },
+    body: formData,
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.message || "Failed to upload material");
+  }
+
+  if (!data.success) {
+    throw new Error(data.message || "Failed to upload material");
+  }
+
+  return data.data;
+}
