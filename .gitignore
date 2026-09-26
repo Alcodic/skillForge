@@ -7,3 +7,9 @@ dist/
 build/
 
 .DS_Store
+
+# Local UI primitive showcase/test files
+frontend/src/components/dev
+
+# Local development/test assets
+frontend/public/dev-assets/
