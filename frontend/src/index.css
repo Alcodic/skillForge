@@ -33,6 +33,10 @@
   --spacing-11: var(--space-11);
   --spacing-12: var(--space-12);
 
+  /* Layout */
+
+  --layout-content-max-width: 80rem;
+
   /* Radius */
   --radius-small: var(--radius-small-value);
   --radius-medium: var(--radius-medium-value);
