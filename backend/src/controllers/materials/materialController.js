@@ -1,6 +1,7 @@
 import crypto from "crypto";
 
 import LearningMaterial from "../../models/LearningMaterial.js";
+import { prepareMaterialForProcessing } from "../../services/documentProcessingService.js";
 
 import { uploadFile, deleteFile } from "../../services/storageService.js";
 
@@ -313,6 +314,44 @@ export const uploadMaterial = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Something went wrong.",
+    });
+  }
+};
+
+export const processMaterial = async (req, res) => {
+  try {
+    const { userId } = req;
+    const { id } = req.params;
+
+    const processingInput = await prepareMaterialForProcessing({
+      materialId: id,
+      userId,
+    });
+
+    console.log({
+      fileName: processingInput.originalFileName,
+      storageReference: processingInput.storageReference,
+      fileSize: processingInput.fileBuffer.length,
+      fileSignature: processingInput.fileBuffer
+        .subarray(0, 5)
+        .toString("ascii"),
+    });
+
+    return res.status(202).json({
+      success: true,
+      data: {
+        material: {
+          id: processingInput.materialId,
+          processingStatus: "PROCESSING",
+        },
+      },
+    });
+  } catch (error) {
+    console.error(error);
+
+    return res.status(error.statusCode || 500).json({
+      success: false,
+      message: error.statusCode ? error.message : "Something went wrong.",
     });
   }
 };

@@ -4,6 +4,7 @@ import {
   getMaterials,
   getMaterialById,
   uploadMaterial,
+  processMaterial,
 } from "../../controllers/materials/materialController.js";
 import { authMiddleware } from "../../middleware/authMiddleware.js";
 import { uploadSingleFile } from "../../middleware/uploadMiddleware.js";
@@ -24,4 +25,5 @@ router.post(
   uploadMaterial,
   uploadErrorMiddleware,
 );
+router.post("/:id/process", authMiddleware, processMaterial);
 export default router;
