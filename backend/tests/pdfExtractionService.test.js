@@ -5,7 +5,7 @@ import { extractPdfText } from "../src/services/pdfExtractionService.js";
 import { normalizeExtractionResult } from "../src/services/textNormalizationService.js";
 
 const pdfBuffer = await readFile(
-  "/Users/avinashkaushal/Downloads/Documents/4month-plan.pdf",
+  new URL("./fixtures/skillforge-test.pdf", import.meta.url),
 );
 
 const result = await extractPdfText(pdfBuffer);
