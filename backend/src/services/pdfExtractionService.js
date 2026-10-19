@@ -21,7 +21,7 @@ const extractPdfText = async (pdfBuffer) => {
         disableCombineTextItems: false,
       });
 
-      console.log("\n--- PDF TEXT ITEM DIAGNOSTICS ---");
+      // console.log("\n--- PDF TEXT ITEM DIAGNOSTICS ---");
 
       for (const item of textContent.items) {
         if (
@@ -30,12 +30,12 @@ const extractPdfText = async (pdfBuffer) => {
             item.str,
           )
         ) {
-          console.log({
-            text: item.str,
-            x: item.transform[4],
-            y: item.transform[5],
-            width: item.width,
-          });
+          // console.log({
+          //   text: item.str,
+          //   x: item.transform[4],
+          //   y: item.transform[5],
+          //   width: item.width,
+          // });
         }
       }
 

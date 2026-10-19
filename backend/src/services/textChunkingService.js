@@ -28,6 +28,8 @@ const createChunk = ({
   startOffset,
   endOffset,
   documentIdentity,
+  materialId,
+  userId,
 }) => {
   const chunkId = createHashId(
     JSON.stringify({
@@ -39,13 +41,20 @@ const createChunk = ({
     }),
   );
 
-  return {
+  const chunk = {
     chunkId,
     sequence,
     text,
     startOffset,
     endOffset,
   };
+
+  if (materialId !== undefined && userId !== undefined) {
+    chunk.materialId = materialId;
+    chunk.userId = userId;
+  }
+
+  return chunk;
 };
 
 const findLastBoundary = (text, minEnd, maxEnd, pattern) => {
@@ -75,6 +84,7 @@ const chunkText = (
     targetSize = DEFAULT_TARGET_SIZE,
     overlap = DEFAULT_OVERLAP,
     materialId,
+    userId,
   } = {},
 ) => {
   if (typeof text !== "string") {
@@ -91,6 +101,24 @@ const chunkText = (
     );
   }
 
+  const hasMaterialId = materialId !== undefined;
+  const hasUserId = userId !== undefined;
+
+  if (hasMaterialId !== hasUserId) {
+    throw new TypeError("Material ID and user ID must be provided together.");
+  }
+
+  if (
+    hasMaterialId &&
+    (typeof materialId !== "string" || materialId.trim().length === 0)
+  ) {
+    throw new TypeError("Material ID must be a non-empty string.");
+  }
+
+  if (hasUserId && (typeof userId !== "string" || userId.trim().length === 0)) {
+    throw new TypeError("User ID must be a non-empty string.");
+  }
+
   if (text.length === 0) {
     return [];
   }
@@ -105,6 +133,8 @@ const chunkText = (
         startOffset: 0,
         endOffset: text.length,
         documentIdentity,
+        materialId,
+        userId,
       }),
     ];
   }
@@ -123,6 +153,8 @@ const chunkText = (
           startOffset,
           endOffset: hardEnd,
           documentIdentity,
+          materialId,
+          userId,
         }),
       );
 
@@ -157,6 +189,8 @@ const chunkText = (
         startOffset,
         endOffset,
         documentIdentity,
+        materialId,
+        userId,
       }),
     );
 

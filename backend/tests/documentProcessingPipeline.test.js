@@ -17,6 +17,7 @@ test("processes a real PDF through extraction, normalization, and chunking", asy
   const normalized = normalizeExtractionResult(extracted);
   const chunks = chunkText(normalized.text, {
     materialId: "skillforge-test-material",
+    userId: "skillforge-test-user",
   });
 
   // Assert: extraction and normalization produced usable text.
