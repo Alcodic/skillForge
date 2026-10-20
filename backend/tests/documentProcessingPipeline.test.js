@@ -18,6 +18,7 @@ test("processes a real PDF through extraction, normalization, and chunking", asy
   const chunks = chunkText(normalized.text, {
     materialId: "skillforge-test-material",
     userId: "skillforge-test-user",
+    pages: normalized.pages,
   });
 
   // Assert: extraction and normalization produced usable text.
@@ -48,6 +49,10 @@ test("processes a real PDF through extraction, normalization, and chunking", asy
       `Chunk ${i} does not match its source offsets`,
     );
 
+    assert.ok(chunks[i].source);
+    assert.ok(chunks[i].source.pageStart >= 1);
+    assert.ok(chunks[i].source.pageEnd >= chunks[i].source.pageStart);
+
     // Verify overlap between adjacent chunks.
     if (i > 0) {
       assert.equal(
@@ -63,5 +68,29 @@ test("processes a real PDF through extraction, normalization, and chunking", asy
     extractedCharacters: extracted.text.length,
     normalizedCharacters: normalized.text.length,
     chunks: chunks.length,
+  });
+});
+
+test("assigns correct page metadata to a chunk spanning two pages", () => {
+  // Arrange: simulate a document containing two PDF pages.
+  const pages = [
+    { pageNumber: 1, text: "JavaScript is a programming language." },
+    { pageNumber: 2, text: "React is a JavaScript library." },
+  ];
+
+  const documentText = pages.map((page) => page.text).join("\n\n");
+
+  // Act: create one chunk that contains text from both pages.
+  const chunks = chunkText(documentText, {
+    targetSize: 200,
+    overlap: 0,
+    pages,
+  });
+
+  // Assert: the chunk spans both PDF pages.
+  assert.equal(chunks.length, 1);
+  assert.deepEqual(chunks[0].source, {
+    pageStart: 1,
+    pageEnd: 2,
   });
 });

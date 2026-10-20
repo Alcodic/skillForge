@@ -30,6 +30,7 @@ const createChunk = ({
   documentIdentity,
   materialId,
   userId,
+  source,
 }) => {
   const chunkId = createHashId(
     JSON.stringify({
@@ -48,6 +49,10 @@ const createChunk = ({
     startOffset,
     endOffset,
   };
+
+  if (source) {
+    chunk.source = source;
+  }
 
   if (materialId !== undefined && userId !== undefined) {
     chunk.materialId = materialId;
@@ -78,6 +83,73 @@ const findLastBoundary = (text, minEnd, maxEnd, pattern) => {
   return boundary;
 };
 
+const getPageRanges = (text, pages) => {
+  if (!Array.isArray(pages)) {
+    throw new TypeError("Pages must be an array.");
+  }
+
+  const reconstructedText = pages
+    .map((page) => {
+      if (
+        !page ||
+        !Number.isInteger(page.pageNumber) ||
+        page.pageNumber < 1 ||
+        typeof page.text !== "string"
+      ) {
+        throw new TypeError(
+          "Each page must have a positive page number and text string.",
+        );
+      }
+
+      return page.text;
+    })
+    .join("\n\n");
+
+  if (reconstructedText !== text) {
+    throw new TypeError(
+      "Page text must match the document text being chunked.",
+    );
+  }
+
+  let offset = 0;
+
+  return pages.map((page, index) => {
+    const startOffset = offset;
+    const endOffset = startOffset + page.text.length;
+
+    offset = endOffset;
+
+    if (index < pages.length - 1) {
+      offset += 2; // Account for the "\n\n" page separator.
+    }
+
+    return {
+      pageNumber: page.pageNumber,
+      startOffset,
+      endOffset,
+    };
+  });
+};
+
+const getSourceMetadata = (startOffset, endOffset, pageRanges) => {
+  if (!pageRanges) {
+    return undefined;
+  }
+
+  const overlappingPages = pageRanges.filter(
+    (page) => startOffset < page.endOffset && endOffset > page.startOffset,
+  );
+
+  if (overlappingPages.length === 0) {
+    return undefined;
+  }
+
+  return {
+    pageStart: overlappingPages[0].pageNumber,
+    pageEnd: overlappingPages[overlappingPages.length - 1].pageNumber,
+  };
+};
+
 const chunkText = (
   text,
   {
@@ -85,6 +157,7 @@ const chunkText = (
     overlap = DEFAULT_OVERLAP,
     materialId,
     userId,
+    pages,
   } = {},
 ) => {
   if (typeof text !== "string") {
@@ -119,6 +192,9 @@ const chunkText = (
     throw new TypeError("User ID must be a non-empty string.");
   }
 
+  const pageRanges =
+    pages === undefined ? undefined : getPageRanges(text, pages);
+
   if (text.length === 0) {
     return [];
   }
@@ -135,6 +211,7 @@ const chunkText = (
         documentIdentity,
         materialId,
         userId,
+        source: getSourceMetadata(0, text.length, pageRanges),
       }),
     ];
   }
@@ -155,6 +232,7 @@ const chunkText = (
           documentIdentity,
           materialId,
           userId,
+          source: getSourceMetadata(startOffset, hardEnd, pageRanges),
         }),
       );
 
@@ -191,6 +269,7 @@ const chunkText = (
         documentIdentity,
         materialId,
         userId,
+        source: getSourceMetadata(startOffset, endOffset, pageRanges),
       }),
     );
 
