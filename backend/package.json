@@ -5,7 +5,8 @@
   "main": "app.js",
   "scripts": {
     "dev": "nodemon src/app.js",
-    "qdrant:init": "node src/scripts/initializeQdrant.js"
+    "qdrant:init": "node src/scripts/initializeQdrant.js",
+    "test": "node --test"
   },
   "keywords": [],
   "author": "",
