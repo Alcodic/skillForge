@@ -189,7 +189,10 @@ test("persists chunks as Qdrant points with deterministic IDs and payload", asyn
     embedding: Array(config.vectorSize).fill(0.25),
   };
 
-  await service.persistChunks([chunk]);
+  const result = await service.persistChunks([chunk]);
+
+  assert.equal(result.persistedCount, 1);
+  assert.equal(result.pointIds.length, 1);
 
   assert.equal(client.calls.upsert.length, 1);
 
@@ -205,6 +208,8 @@ test("persists chunks as Qdrant points with deterministic IDs and payload", asyn
     point.id,
     /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
   );
+
+  assert.equal(result.pointIds[0], point.id);
 
   assert.equal(point.vector.length, config.vectorSize);
   assert.deepEqual(point.vector, chunk.embedding);
@@ -227,7 +232,11 @@ test("does not call Qdrant when persisting an empty array", async () => {
 
   const result = await service.persistChunks([]);
 
-  assert.deepEqual(result, { persistedCount: 0 });
+  assert.deepEqual(result, {
+    persistedCount: 0,
+    pointIds: [],
+  });
+
   assert.equal(client.calls.upsert.length, 0);
 });
 

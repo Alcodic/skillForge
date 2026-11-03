@@ -123,7 +123,7 @@ const createQdrantService = ({ client, config } = {}) => {
     }
 
     if (chunks.length === 0) {
-      return { persistedCount: 0 };
+      return { persistedCount: 0, pointIds: [] };
     }
 
     const points = chunks.map((chunk) => {
@@ -204,6 +204,7 @@ const createQdrantService = ({ client, config } = {}) => {
 
     return {
       persistedCount: points.length,
+      pointIds: points.map((point) => point.id),
       result,
     };
   };

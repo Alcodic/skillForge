@@ -1,7 +1,7 @@
 import crypto from "crypto";
 
 import LearningMaterial from "../../models/LearningMaterial.js";
-import { prepareMaterialForProcessing } from "../../services/documentProcessingService.js";
+import { processMaterialDocument } from "../../services/documentProcessingService.js";
 
 import { uploadFile, deleteFile } from "../../services/storageService.js";
 
@@ -318,40 +318,40 @@ export const uploadMaterial = async (req, res) => {
   }
 };
 
-export const processMaterial = async (req, res) => {
-  try {
-    const { userId } = req;
-    const { id } = req.params;
+export const createProcessMaterialController = ({
+  processMaterialDocumentFn = processMaterialDocument,
+} = {}) => {
+  return async (req, res) => {
+    try {
+      const { userId } = req;
+      const { id } = req.params;
 
-    const processingInput = await prepareMaterialForProcessing({
-      materialId: id,
-      userId,
-    });
+      const processingResult = await processMaterialDocumentFn({
+        materialId: id,
+        userId,
+      });
 
-    console.log({
-      fileName: processingInput.originalFileName,
-      storageReference: processingInput.storageReference,
-      fileSize: processingInput.fileBuffer.length,
-      fileSignature: processingInput.fileBuffer
-        .subarray(0, 5)
-        .toString("ascii"),
-    });
-
-    return res.status(202).json({
-      success: true,
-      data: {
-        material: {
-          id: processingInput.materialId,
-          processingStatus: "PROCESSING",
+      return res.status(202).json({
+        success: true,
+        data: {
+          material: {
+            id: processingResult.materialId,
+            processingStatus: "PROCESSING",
+            chunkCount: processingResult.chunkCount,
+            vectorCount: processingResult.vectorCount,
+            metadataCount: processingResult.metadataCount,
+          },
         },
-      },
-    });
-  } catch (error) {
-    console.error(error);
+      });
+    } catch (error) {
+      console.error(error);
 
-    return res.status(error.statusCode || 500).json({
-      success: false,
-      message: error.statusCode ? error.message : "Something went wrong.",
-    });
-  }
+      return res.status(error.statusCode || 500).json({
+        success: false,
+        message: error.statusCode ? error.message : "Something went wrong.",
+      });
+    }
+  };
 };
+
+export const processMaterial = createProcessMaterialController();
