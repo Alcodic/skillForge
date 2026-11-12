@@ -132,6 +132,21 @@ export const persistChunkMetadata = async ({
   return { persistedCount: operations.length };
 };
 
+const markMaterialReady = async ({ materialId, userId }) => {
+  return LearningMaterial.updateOne(
+    {
+      _id: materialId,
+      userId,
+      processingStatus: "PROCESSING",
+    },
+    {
+      $set: {
+        processingStatus: "READY",
+      },
+    },
+  );
+};
+
 /**
  * Runs the document processing pipeline through chunk metadata persistence.
  *
@@ -148,6 +163,7 @@ export const processMaterialDocument = async ({
   normalizeExtractionResultFn = normalizeExtractionResult,
   chunkTextFn = chunkText,
   persistChunkMetadataFn = persistChunkMetadata,
+  updateMaterialStatusFn = markMaterialReady,
 }) => {
   const processingInput = await prepareMaterial({
     materialId,
@@ -165,12 +181,11 @@ export const processMaterialDocument = async ({
   });
 
   if (chunks.length === 0) {
-    return {
-      materialId: String(processingInput.materialId),
-      chunkCount: 0,
-      vectorCount: 0,
-      metadataCount: 0,
-    };
+    const error = new Error("Document processing produced no usable chunks.");
+
+    error.statusCode = 422;
+
+    throw error;
   }
 
   const resolvedEmbedTexts = embedTexts ?? createConfiguredEmbeddingService();
@@ -206,6 +221,12 @@ export const processMaterialDocument = async ({
     );
   }
 
+  if (qdrantResult.persistedCount !== chunks.length) {
+    throw new Error(
+      "Qdrant persisted count must match the number of document chunks.",
+    );
+  }
+
   const metadataResult = await persistChunkMetadataFn({
     chunks,
     pointIds: qdrantResult.pointIds,
@@ -214,8 +235,30 @@ export const processMaterialDocument = async ({
     documentChunkModel,
   });
 
+  if (metadataResult.persistedCount !== chunks.length) {
+    throw new Error(
+      "Persisted metadata count must match the number of document chunks.",
+    );
+  }
+
+  const readyUpdate = await updateMaterialStatusFn({
+    materialId,
+    userId,
+  });
+
+  if (readyUpdate?.matchedCount !== 1) {
+    const error = new Error(
+      "Material could not be marked as READY because it is no longer in PROCESSING state.",
+    );
+
+    error.statusCode = 409;
+
+    throw error;
+  }
+
   return {
     materialId: String(processingInput.materialId),
+    processingStatus: "READY",
     chunkCount: chunks.length,
     vectorCount: qdrantResult.persistedCount,
     metadataCount: metadataResult.persistedCount,

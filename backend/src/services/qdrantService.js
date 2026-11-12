@@ -117,6 +117,8 @@ const createQdrantService = ({ client, config } = {}) => {
     };
   };
 
+  //Step 5.I.14 implementation
+
   const persistChunks = async (chunks) => {
     if (!Array.isArray(chunks)) {
       throw new TypeError("Chunks must be provided as an array.");

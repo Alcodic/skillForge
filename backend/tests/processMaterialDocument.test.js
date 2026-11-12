@@ -86,7 +86,10 @@ const createDependencies = (overrides = {}) => {
     embedTexts: async (texts) => {
       calls.push("embedTexts");
 
-      assert.deepEqual(texts, chunks.map((chunk) => chunk.text));
+      assert.deepEqual(
+        texts,
+        chunks.map((chunk) => chunk.text),
+      );
 
       return {
         model: "test-embedding-model",
@@ -129,6 +132,17 @@ const createDependencies = (overrides = {}) => {
         persistedCount: 2,
       };
     },
+
+    updateMaterialStatusFn: async ({ materialId, userId }) => {
+      calls.push("updateMaterialStatus");
+
+      assert.equal(materialId, "material-123");
+      assert.equal(userId, "user-456");
+
+      return {
+        matchedCount: 1,
+      };
+    },
   };
 
   return {
@@ -161,17 +175,19 @@ test("orchestrates processing through embedding, Qdrant, and MongoDB metadata pe
     "embedTexts",
     "qdrant.persistChunks",
     "persistChunkMetadata",
+    "updateMaterialStatus",
   ]);
 
   assert.deepEqual(result, {
     materialId: "material-123",
+    processingStatus: "READY",
     chunkCount: 2,
     vectorCount: 2,
     metadataCount: 2,
   });
 });
 
-test("returns zero counts and skips embedding, Qdrant, and MongoDB when there are no chunks", async () => {
+test("rejects zero chunks and never marks the material as READY", async () => {
   const { calls, dependencies } = createDependencies({
     chunkTextFn: () => {
       calls.push("chunkText");
@@ -179,7 +195,14 @@ test("returns zero counts and skips embedding, Qdrant, and MongoDB when there ar
     },
   });
 
-  const result = await runPipeline(dependencies);
+  await assert.rejects(runPipeline(dependencies), (error) => {
+    assert.equal(error.statusCode, 422);
+    assert.equal(
+      error.message,
+      "Document processing produced no usable chunks.",
+    );
+    return true;
+  });
 
   assert.deepEqual(calls, [
     "prepareMaterial",
@@ -188,12 +211,7 @@ test("returns zero counts and skips embedding, Qdrant, and MongoDB when there ar
     "chunkText",
   ]);
 
-  assert.deepEqual(result, {
-    materialId: "material-123",
-    chunkCount: 0,
-    vectorCount: 0,
-    metadataCount: 0,
-  });
+  assert.equal(calls.includes("updateMaterialStatus"), false);
 });
 
 test("rejects an embedding count mismatch before calling Qdrant", async () => {
@@ -236,6 +254,28 @@ test("rejects a Qdrant point ID count mismatch before MongoDB persistence", asyn
   assert.equal(calls.includes("persistChunkMetadata"), false);
 });
 
+test("rejects a Qdrant persisted count mismatch before MongoDB metadata persistence", async () => {
+  const { calls, dependencies } = createDependencies({
+    qdrantService: {
+      persistChunks: async () => {
+        calls.push("qdrant.persistChunks");
+
+        return {
+          persistedCount: 1,
+          pointIds: ["point-001", "point-002"],
+        };
+      },
+    },
+  });
+
+  await assert.rejects(runPipeline(dependencies), {
+    message: "Qdrant persisted count must match the number of document chunks.",
+  });
+
+  assert.equal(calls.includes("persistChunkMetadata"), false);
+  assert.equal(calls.includes("updateMaterialStatus"), false);
+});
+
 test("propagates extraction failures and stops the pipeline", async () => {
   const extractionError = new Error("PDF extraction failed");
 
@@ -248,8 +288,84 @@ test("propagates extraction failures and stops the pipeline", async () => {
 
   await assert.rejects(runPipeline(dependencies), extractionError);
 
-  assert.deepEqual(calls, [
-    "prepareMaterial",
-    "extractPdfText",
-  ]);
+  assert.deepEqual(calls, ["prepareMaterial", "extractPdfText"]);
+  assert.equal(calls.includes("updateMaterialStatus"), false);
+});
+
+test("rejects a metadata persisted count mismatch before marking READY", async () => {
+  const { calls, dependencies } = createDependencies({
+    persistChunkMetadataFn: async () => {
+      calls.push("persistChunkMetadata");
+
+      return {
+        persistedCount: 1,
+      };
+    },
+  });
+
+  await assert.rejects(runPipeline(dependencies), {
+    message:
+      "Persisted metadata count must match the number of document chunks.",
+  });
+
+  assert.equal(calls.includes("updateMaterialStatus"), false);
+});
+
+test("rejects when the material cannot transition from PROCESSING to READY", async () => {
+  const { calls, dependencies } = createDependencies({
+    updateMaterialStatusFn: async () => {
+      calls.push("updateMaterialStatus");
+
+      return {
+        matchedCount: 0,
+      };
+    },
+  });
+
+  await assert.rejects(runPipeline(dependencies), (error) => {
+    assert.equal(error.statusCode, 409);
+    assert.equal(
+      error.message,
+      "Material could not be marked as READY because it is no longer in PROCESSING state.",
+    );
+    return true;
+  });
+
+  assert.equal(calls.includes("persistChunkMetadata"), true);
+  assert.equal(calls.includes("updateMaterialStatus"), true);
+});
+
+test("propagates embedding failures without marking READY", async () => {
+  const embeddingError = new Error("Embedding provider failed");
+
+  const { calls, dependencies } = createDependencies({
+    embedTexts: async () => {
+      calls.push("embedTexts");
+      throw embeddingError;
+    },
+  });
+
+  await assert.rejects(runPipeline(dependencies), embeddingError);
+
+  assert.equal(calls.includes("qdrant.persistChunks"), false);
+  assert.equal(calls.includes("persistChunkMetadata"), false);
+  assert.equal(calls.includes("updateMaterialStatus"), false);
+});
+
+test("propagates Qdrant persistence failures without marking READY", async () => {
+  const qdrantError = new Error("Qdrant upsert failed");
+
+  const { calls, dependencies } = createDependencies({
+    qdrantService: {
+      persistChunks: async () => {
+        calls.push("qdrant.persistChunks");
+        throw qdrantError;
+      },
+    },
+  });
+
+  await assert.rejects(runPipeline(dependencies), qdrantError);
+
+  assert.equal(calls.includes("persistChunkMetadata"), false);
+  assert.equal(calls.includes("updateMaterialStatus"), false);
 });

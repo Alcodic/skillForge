@@ -29,7 +29,7 @@ const createRequest = () => ({
   },
 });
 
-test("returns 202 and processing counts after successful processing", async () => {
+test("returns 200 and READY with processing counts after successful processing", async () => {
   let receivedInput;
 
   const controller = createProcessMaterialController({
@@ -38,6 +38,7 @@ test("returns 202 and processing counts after successful processing", async () =
 
       return {
         materialId: "material-456",
+        processingStatus: "READY",
         chunkCount: 12,
         vectorCount: 12,
         metadataCount: 12,
@@ -55,14 +56,14 @@ test("returns 202 and processing counts after successful processing", async () =
     userId: "user-123",
   });
 
-  assert.equal(res.statusCode, 202);
+  assert.equal(res.statusCode, 200);
 
   assert.deepEqual(res.body, {
     success: true,
     data: {
       material: {
         id: "material-456",
-        processingStatus: "PROCESSING",
+        processingStatus: "READY",
         chunkCount: 12,
         vectorCount: 12,
         metadataCount: 12,
@@ -71,27 +72,27 @@ test("returns 202 and processing counts after successful processing", async () =
   });
 });
 
-test("returns zero counts when the document contains no chunks", async () => {
+test("returns 422 when document processing produces no usable chunks", async () => {
+  const processingError = new Error(
+    "Document processing produced no usable chunks.",
+  );
+  processingError.statusCode = 422;
+
   const controller = createProcessMaterialController({
-    processMaterialDocumentFn: async () => ({
-      materialId: "material-456",
-      chunkCount: 0,
-      vectorCount: 0,
-      metadataCount: 0,
-    }),
+    processMaterialDocumentFn: async () => {
+      throw processingError;
+    },
   });
 
   const res = createResponse();
 
   await controller(createRequest(), res);
 
-  assert.equal(res.statusCode, 202);
-  assert.deepEqual(res.body.data.material, {
-    id: "material-456",
-    processingStatus: "PROCESSING",
-    chunkCount: 0,
-    vectorCount: 0,
-    metadataCount: 0,
+  assert.equal(res.statusCode, 422);
+
+  assert.deepEqual(res.body, {
+    success: false,
+    message: "Document processing produced no usable chunks.",
   });
 });
 

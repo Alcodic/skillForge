@@ -331,12 +331,12 @@ export const createProcessMaterialController = ({
         userId,
       });
 
-      return res.status(202).json({
+      return res.status(200).json({
         success: true,
         data: {
           material: {
             id: processingResult.materialId,
-            processingStatus: "PROCESSING",
+            processingStatus: processingResult.processingStatus,
             chunkCount: processingResult.chunkCount,
             vectorCount: processingResult.vectorCount,
             metadataCount: processingResult.metadataCount,
