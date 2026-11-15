@@ -75,6 +75,8 @@ test("persists chunk metadata with matching Qdrant point IDs", async () => {
     updateOne: {
       filter: {
         chunkId: "chunk-001",
+        materialId: "material-123",
+        userId: "user-456",
       },
       update: {
         $set: {

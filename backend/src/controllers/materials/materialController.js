@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import mongoose from "mongoose";
 
 import LearningMaterial from "../../models/LearningMaterial.js";
 import { processMaterialDocument } from "../../services/documentProcessingService.js";
@@ -266,7 +267,7 @@ export const uploadMaterial = async (req, res) => {
 
     // 4. Update MongoDB with S3 reference + next lifecycle state
     material.storageReference = objectKey;
-    material.processingStatus = "PROCESSING";
+    material.processingStatus = "QUEUED";
 
     await material.save();
 
@@ -320,17 +321,76 @@ export const uploadMaterial = async (req, res) => {
 
 export const createProcessMaterialController = ({
   processMaterialDocumentFn = processMaterialDocument,
+  learningMaterialModel = LearningMaterial,
 } = {}) => {
   return async (req, res) => {
     try {
       const { userId } = req;
       const { id } = req.params;
 
+      // 1. Validate material ID
+      if (!mongoose.isValidObjectId(id)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid material ID.",
+        });
+      }
+
+      // 2. Atomically claim the material for processing
+      const claimedMaterial = await learningMaterialModel
+        .findOneAndUpdate(
+          {
+            _id: id,
+            userId,
+            processingStatus: {
+              $in: ["QUEUED", "FAILED"],
+            },
+            storageReference: {
+              $exists: true,
+              $nin: ["PENDING", null, ""],
+            },
+          },
+          {
+            $set: {
+              processingStatus: "PROCESSING",
+            },
+          },
+          {
+            new: true,
+            runValidators: true,
+          },
+        )
+        .select("_id");
+
+      // 3. Handle unsuccessful claim
+      if (!claimedMaterial) {
+        const existingMaterial = await learningMaterialModel
+          .findOne({
+            _id: id,
+            userId,
+          })
+          .select("processingStatus");
+
+        if (!existingMaterial) {
+          return res.status(404).json({
+            success: false,
+            message: "Material not found.",
+          });
+        }
+
+        return res.status(409).json({
+          success: false,
+          message: `Material cannot be processed in its current state: ${existingMaterial.processingStatus}.`,
+        });
+      }
+
+      // 4. Start processing after successfully claiming the material
       const processingResult = await processMaterialDocumentFn({
         materialId: id,
         userId,
       });
 
+      // 5. Return successful processing response
       return res.status(200).json({
         success: true,
         data: {

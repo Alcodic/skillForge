@@ -29,7 +29,7 @@ const LearningMaterialSchema = mongoose.Schema(
     },
     processingStatus: {
       type: String,
-      enum: ["UPLOADING", "PROCESSING", "READY", "FAILED"],
+      enum: ["UPLOADING", "QUEUED", "PROCESSING", "READY", "FAILED"],
       required: true,
     },
 
@@ -37,6 +37,21 @@ const LearningMaterialSchema = mongoose.Schema(
       type: String,
       trim: true,
       maxlength: 128,
+    },
+
+    processingError: {
+      stage: {
+        type: String,
+        default: null,
+      },
+      message: {
+        type: String,
+        default: null,
+      },
+      failedAt: {
+        type: Date,
+        default: null,
+      },
     },
 
     fileHash: {

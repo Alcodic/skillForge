@@ -5,6 +5,7 @@ import { processMaterialDocument } from "../src/services/documentProcessingServi
 
 const createDependencies = (overrides = {}) => {
   const calls = [];
+  const failureRecords = [];
 
   const chunks = [
     {
@@ -143,11 +144,22 @@ const createDependencies = (overrides = {}) => {
         matchedCount: 1,
       };
     },
+
+    recordProcessingFailureFn: async (failureDetails) => {
+      calls.push("recordProcessingFailure");
+
+      failureRecords.push(failureDetails);
+
+      return {
+        matchedCount: 1,
+      };
+    },
   };
 
   return {
     calls,
     chunks,
+    failureRecords,
     dependencies: {
       ...dependencies,
       ...overrides,
@@ -163,7 +175,7 @@ const runPipeline = (dependencies) =>
   });
 
 test("orchestrates processing through embedding, Qdrant, and MongoDB metadata persistence", async () => {
-  const { calls, dependencies } = createDependencies();
+  const { calls, dependencies, failureRecords } = createDependencies();
 
   const result = await runPipeline(dependencies);
 
@@ -185,10 +197,13 @@ test("orchestrates processing through embedding, Qdrant, and MongoDB metadata pe
     vectorCount: 2,
     metadataCount: 2,
   });
+
+  // Successful processing must not record a failure.
+  assert.deepEqual(failureRecords, []);
 });
 
 test("rejects zero chunks and never marks the material as READY", async () => {
-  const { calls, dependencies } = createDependencies({
+  const { calls, dependencies, failureRecords } = createDependencies({
     chunkTextFn: () => {
       calls.push("chunkText");
       return [];
@@ -209,13 +224,22 @@ test("rejects zero chunks and never marks the material as READY", async () => {
     "extractPdfText",
     "normalizeExtractionResult",
     "chunkText",
+    "recordProcessingFailure",
+  ]);
+
+  assert.deepEqual(failureRecords, [
+    {
+      materialId: "material-123",
+      userId: "user-456",
+      stage: "CHUNKING",
+    },
   ]);
 
   assert.equal(calls.includes("updateMaterialStatus"), false);
 });
 
-test("rejects an embedding count mismatch before calling Qdrant", async () => {
-  const { calls, dependencies } = createDependencies({
+test("records EMBEDDING_GENERATION failure for an embedding count mismatch", async () => {
+  const { calls, dependencies, failureRecords } = createDependencies({
     embedTexts: async () => {
       calls.push("embedTexts");
 
@@ -231,10 +255,21 @@ test("rejects an embedding count mismatch before calling Qdrant", async () => {
 
   assert.equal(calls.includes("qdrant.persistChunks"), false);
   assert.equal(calls.includes("persistChunkMetadata"), false);
+  assert.equal(calls.includes("updateMaterialStatus"), false);
+
+  assert.deepEqual(failureRecords, [
+    {
+      materialId: "material-123",
+      userId: "user-456",
+      stage: "EMBEDDING_GENERATION",
+    },
+  ]);
+
+  assert.equal(calls.at(-1), "recordProcessingFailure");
 });
 
-test("rejects a Qdrant point ID count mismatch before MongoDB persistence", async () => {
-  const { calls, dependencies } = createDependencies({
+test("records VECTOR_PERSISTENCE failure for a Qdrant point ID count mismatch", async () => {
+  const { calls, dependencies, failureRecords } = createDependencies({
     qdrantService: {
       persistChunks: async () => {
         calls.push("qdrant.persistChunks");
@@ -252,10 +287,21 @@ test("rejects a Qdrant point ID count mismatch before MongoDB persistence", asyn
   });
 
   assert.equal(calls.includes("persistChunkMetadata"), false);
+  assert.equal(calls.includes("updateMaterialStatus"), false);
+
+  assert.deepEqual(failureRecords, [
+    {
+      materialId: "material-123",
+      userId: "user-456",
+      stage: "VECTOR_PERSISTENCE",
+    },
+  ]);
+
+  assert.equal(calls.at(-1), "recordProcessingFailure");
 });
 
-test("rejects a Qdrant persisted count mismatch before MongoDB metadata persistence", async () => {
-  const { calls, dependencies } = createDependencies({
+test("records VECTOR_PERSISTENCE failure for a Qdrant persisted count mismatch", async () => {
+  const { calls, dependencies, failureRecords } = createDependencies({
     qdrantService: {
       persistChunks: async () => {
         calls.push("qdrant.persistChunks");
@@ -274,12 +320,22 @@ test("rejects a Qdrant persisted count mismatch before MongoDB metadata persiste
 
   assert.equal(calls.includes("persistChunkMetadata"), false);
   assert.equal(calls.includes("updateMaterialStatus"), false);
+
+  assert.deepEqual(failureRecords, [
+    {
+      materialId: "material-123",
+      userId: "user-456",
+      stage: "VECTOR_PERSISTENCE",
+    },
+  ]);
+
+  assert.equal(calls.at(-1), "recordProcessingFailure");
 });
 
-test("propagates extraction failures and stops the pipeline", async () => {
+test("records TEXT_EXTRACTION failure and propagates the original error", async () => {
   const extractionError = new Error("PDF extraction failed");
 
-  const { calls, dependencies } = createDependencies({
+  const { calls, dependencies, failureRecords } = createDependencies({
     extractPdfTextFn: async () => {
       calls.push("extractPdfText");
       throw extractionError;
@@ -288,12 +344,25 @@ test("propagates extraction failures and stops the pipeline", async () => {
 
   await assert.rejects(runPipeline(dependencies), extractionError);
 
-  assert.deepEqual(calls, ["prepareMaterial", "extractPdfText"]);
+  assert.deepEqual(calls, [
+    "prepareMaterial",
+    "extractPdfText",
+    "recordProcessingFailure",
+  ]);
+
+  assert.deepEqual(failureRecords, [
+    {
+      materialId: "material-123",
+      userId: "user-456",
+      stage: "TEXT_EXTRACTION",
+    },
+  ]);
+
   assert.equal(calls.includes("updateMaterialStatus"), false);
 });
 
-test("rejects a metadata persisted count mismatch before marking READY", async () => {
-  const { calls, dependencies } = createDependencies({
+test("records METADATA_PERSISTENCE failure for a metadata count mismatch", async () => {
+  const { calls, dependencies, failureRecords } = createDependencies({
     persistChunkMetadataFn: async () => {
       calls.push("persistChunkMetadata");
 
@@ -309,10 +378,20 @@ test("rejects a metadata persisted count mismatch before marking READY", async (
   });
 
   assert.equal(calls.includes("updateMaterialStatus"), false);
+
+  assert.deepEqual(failureRecords, [
+    {
+      materialId: "material-123",
+      userId: "user-456",
+      stage: "METADATA_PERSISTENCE",
+    },
+  ]);
+
+  assert.equal(calls.at(-1), "recordProcessingFailure");
 });
 
-test("rejects when the material cannot transition from PROCESSING to READY", async () => {
-  const { calls, dependencies } = createDependencies({
+test("records READY_TRANSITION failure when the material cannot transition from PROCESSING to READY", async () => {
+  const { calls, dependencies, failureRecords } = createDependencies({
     updateMaterialStatusFn: async () => {
       calls.push("updateMaterialStatus");
 
@@ -333,12 +412,22 @@ test("rejects when the material cannot transition from PROCESSING to READY", asy
 
   assert.equal(calls.includes("persistChunkMetadata"), true);
   assert.equal(calls.includes("updateMaterialStatus"), true);
+
+  assert.deepEqual(failureRecords, [
+    {
+      materialId: "material-123",
+      userId: "user-456",
+      stage: "READY_TRANSITION",
+    },
+  ]);
+
+  assert.equal(calls.at(-1), "recordProcessingFailure");
 });
 
-test("propagates embedding failures without marking READY", async () => {
+test("records EMBEDDING_GENERATION failure when the embedding provider throws", async () => {
   const embeddingError = new Error("Embedding provider failed");
 
-  const { calls, dependencies } = createDependencies({
+  const { calls, dependencies, failureRecords } = createDependencies({
     embedTexts: async () => {
       calls.push("embedTexts");
       throw embeddingError;
@@ -350,12 +439,22 @@ test("propagates embedding failures without marking READY", async () => {
   assert.equal(calls.includes("qdrant.persistChunks"), false);
   assert.equal(calls.includes("persistChunkMetadata"), false);
   assert.equal(calls.includes("updateMaterialStatus"), false);
+
+  assert.deepEqual(failureRecords, [
+    {
+      materialId: "material-123",
+      userId: "user-456",
+      stage: "EMBEDDING_GENERATION",
+    },
+  ]);
+
+  assert.equal(calls.at(-1), "recordProcessingFailure");
 });
 
-test("propagates Qdrant persistence failures without marking READY", async () => {
+test("records VECTOR_PERSISTENCE failure when Qdrant persistence throws", async () => {
   const qdrantError = new Error("Qdrant upsert failed");
 
-  const { calls, dependencies } = createDependencies({
+  const { calls, dependencies, failureRecords } = createDependencies({
     qdrantService: {
       persistChunks: async () => {
         calls.push("qdrant.persistChunks");
@@ -368,4 +467,55 @@ test("propagates Qdrant persistence failures without marking READY", async () =>
 
   assert.equal(calls.includes("persistChunkMetadata"), false);
   assert.equal(calls.includes("updateMaterialStatus"), false);
+
+  assert.deepEqual(failureRecords, [
+    {
+      materialId: "material-123",
+      userId: "user-456",
+      stage: "VECTOR_PERSISTENCE",
+    },
+  ]);
+
+  assert.equal(calls.at(-1), "recordProcessingFailure");
+});
+
+test("preserves the original processing error when failure recording also fails", async () => {
+  const extractionError = new Error("PDF extraction failed");
+  const recordingError = new Error("MongoDB failure recorder failed");
+
+  const { calls, dependencies } = createDependencies({
+    extractPdfTextFn: async () => {
+      calls.push("extractPdfText");
+      throw extractionError;
+    },
+
+    recordProcessingFailureFn: async () => {
+      calls.push("recordProcessingFailure");
+      throw recordingError;
+    },
+  });
+
+  await assert.rejects(runPipeline(dependencies), extractionError);
+
+  assert.equal(calls.at(-1), "recordProcessingFailure");
+});
+
+test("does not record processing failure for precondition errors", async () => {
+  const preconditionError = new Error(
+    "Material is not eligible for processing",
+  );
+
+  preconditionError.isPreconditionError = true;
+
+  const { calls, dependencies, failureRecords } = createDependencies({
+    prepareMaterial: async () => {
+      calls.push("prepareMaterial");
+      throw preconditionError;
+    },
+  });
+
+  await assert.rejects(runPipeline(dependencies), preconditionError);
+
+  assert.deepEqual(failureRecords, []);
+  assert.equal(calls.includes("recordProcessingFailure"), false);
 });

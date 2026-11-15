@@ -14,6 +14,7 @@ export const prepareMaterialForProcessing = async ({ materialId, userId }) => {
   if (!mongoose.Types.ObjectId.isValid(materialId)) {
     const error = new Error("Invalid material ID.");
     error.statusCode = 400;
+    error.isPreconditionError = true;
     throw error;
   }
 
@@ -25,6 +26,7 @@ export const prepareMaterialForProcessing = async ({ materialId, userId }) => {
   if (!material) {
     const error = new Error("Material not found.");
     error.statusCode = 404;
+    error.isPreconditionError = true;
     throw error;
   }
 
@@ -33,12 +35,14 @@ export const prepareMaterialForProcessing = async ({ materialId, userId }) => {
       "Material must be in PROCESSING status before processing.",
     );
     error.statusCode = 409;
+    error.isPreconditionError = true;
     throw error;
   }
 
   if (!material.storageReference || material.storageReference === "PENDING") {
     const error = new Error("Material storage reference is unavailable.");
     error.statusCode = 409;
+    error.isPreconditionError = true;
     throw error;
   }
 
@@ -120,7 +124,11 @@ export const persistChunkMetadata = async ({
 
     return {
       updateOne: {
-        filter: { chunkId: chunk.chunkId },
+        filter: {
+          chunkId: chunk.chunkId,
+          materialId,
+          userId,
+        },
         update: { $set: document },
         upsert: true,
       },
@@ -142,6 +150,44 @@ const markMaterialReady = async ({ materialId, userId }) => {
     {
       $set: {
         processingStatus: "READY",
+        "processingError.stage": null,
+        "processingError.message": null,
+        "processingError.failedAt": null,
+      },
+    },
+  );
+};
+
+const recordMaterialProcessingFailure = async ({
+  materialId,
+  userId,
+  stage,
+}) => {
+  const safeFailureMessages = {
+    PREPARATION: "Material preparation failed.",
+    TEXT_EXTRACTION: "PDF text extraction failed.",
+    TEXT_NORMALIZATION: "Extracted text normalization failed.",
+    CHUNKING: "Document chunk generation failed.",
+    EMBEDDING_GENERATION: "Document embedding generation failed.",
+    VECTOR_PERSISTENCE: "Vector database persistence failed.",
+    METADATA_PERSISTENCE: "Document chunk metadata persistence failed.",
+    READY_TRANSITION: "Material could not transition to READY status.",
+  };
+
+  const message = safeFailureMessages[stage] ?? "Document processing failed.";
+
+  return LearningMaterial.updateOne(
+    {
+      _id: materialId,
+      userId,
+      processingStatus: "PROCESSING",
+    },
+    {
+      $set: {
+        processingStatus: "FAILED",
+        "processingError.stage": stage,
+        "processingError.message": message,
+        "processingError.failedAt": new Date(),
       },
     },
   );
@@ -164,103 +210,143 @@ export const processMaterialDocument = async ({
   chunkTextFn = chunkText,
   persistChunkMetadataFn = persistChunkMetadata,
   updateMaterialStatusFn = markMaterialReady,
+  recordProcessingFailureFn = recordMaterialProcessingFailure,
 }) => {
-  const processingInput = await prepareMaterial({
-    materialId,
-    userId,
-  });
+  let currentStage = "PREPARATION";
 
-  const extraction = await extractPdfTextFn(processingInput.fileBuffer);
+  try {
+    const processingInput = await prepareMaterial({
+      materialId,
+      userId,
+    });
 
-  const normalizedExtraction = normalizeExtractionResultFn(extraction);
+    currentStage = "TEXT_EXTRACTION";
 
-  const chunks = chunkTextFn(normalizedExtraction.text, {
-    materialId: String(processingInput.materialId),
-    userId: String(processingInput.userId),
-    pages: normalizedExtraction.pages,
-  });
+    const extraction = await extractPdfTextFn(processingInput.fileBuffer);
 
-  if (chunks.length === 0) {
-    const error = new Error("Document processing produced no usable chunks.");
+    currentStage = "TEXT_NORMALIZATION";
 
-    error.statusCode = 422;
+    const normalizedExtraction = normalizeExtractionResultFn(extraction);
 
+    currentStage = "CHUNKING";
+
+    const chunks = chunkTextFn(normalizedExtraction.text, {
+      materialId: String(processingInput.materialId),
+      userId: String(processingInput.userId),
+      pages: normalizedExtraction.pages,
+    });
+
+    if (chunks.length === 0) {
+      const error = new Error("Document processing produced no usable chunks.");
+
+      error.statusCode = 422;
+
+      throw error;
+    }
+
+    currentStage = "EMBEDDING_GENERATION";
+
+    const resolvedEmbedTexts = embedTexts ?? createConfiguredEmbeddingService();
+
+    const embeddingResult = await resolvedEmbedTexts(
+      chunks.map((chunk) => chunk.text),
+    );
+
+    const embeddings = embeddingResult?.embeddings;
+
+    if (!Array.isArray(embeddings) || embeddings.length !== chunks.length) {
+      throw new Error(
+        "Embedding count must match the number of document chunks.",
+      );
+    }
+
+    const embeddedChunks = chunks.map((chunk, index) => ({
+      ...chunk,
+      embedding: embeddings[index],
+    }));
+
+    currentStage = "VECTOR_PERSISTENCE";
+
+    const resolvedQdrantService = qdrantService ?? createQdrantService();
+
+    const qdrantResult =
+      await resolvedQdrantService.persistChunks(embeddedChunks);
+
+    if (
+      !Array.isArray(qdrantResult?.pointIds) ||
+      qdrantResult.pointIds.length !== chunks.length
+    ) {
+      throw new Error(
+        "Qdrant point ID count must match the number of document chunks.",
+      );
+    }
+
+    if (qdrantResult.persistedCount !== chunks.length) {
+      throw new Error(
+        "Qdrant persisted count must match the number of document chunks.",
+      );
+    }
+
+    currentStage = "METADATA_PERSISTENCE";
+
+    const metadataResult = await persistChunkMetadataFn({
+      chunks,
+      pointIds: qdrantResult.pointIds,
+      materialId: String(processingInput.materialId),
+      userId: String(processingInput.userId),
+      documentChunkModel,
+    });
+
+    if (metadataResult.persistedCount !== chunks.length) {
+      throw new Error(
+        "Persisted metadata count must match the number of document chunks.",
+      );
+    }
+
+    currentStage = "READY_TRANSITION";
+
+    const readyUpdate = await updateMaterialStatusFn({
+      materialId,
+      userId,
+    });
+
+    if (readyUpdate?.matchedCount !== 1) {
+      const error = new Error(
+        "Material could not be marked as READY because it is no longer in PROCESSING state.",
+      );
+
+      error.statusCode = 409;
+
+      throw error;
+    }
+
+    return {
+      materialId: String(processingInput.materialId),
+      processingStatus: "READY",
+      chunkCount: chunks.length,
+      vectorCount: qdrantResult.persistedCount,
+      metadataCount: metadataResult.persistedCount,
+    };
+  } catch (error) {
+    // Request and precondition errors must not mark a material as FAILED.
+    const isPreconditionError = error.isPreconditionError === true;
+
+    if (!isPreconditionError) {
+      try {
+        await recordProcessingFailureFn({
+          materialId,
+          userId,
+          stage: currentStage,
+        });
+      } catch (recordingError) {
+        console.error(
+          "Failed to persist document processing failure:",
+          recordingError,
+        );
+      }
+    }
+
+    // Preserve the original processing error for the controller.
     throw error;
   }
-
-  const resolvedEmbedTexts = embedTexts ?? createConfiguredEmbeddingService();
-
-  const resolvedQdrantService = qdrantService ?? createQdrantService();
-
-  const embeddingResult = await resolvedEmbedTexts(
-    chunks.map((chunk) => chunk.text),
-  );
-
-  const embeddings = embeddingResult?.embeddings;
-
-  if (!Array.isArray(embeddings) || embeddings.length !== chunks.length) {
-    throw new Error(
-      "Embedding count must match the number of document chunks.",
-    );
-  }
-
-  const embeddedChunks = chunks.map((chunk, index) => ({
-    ...chunk,
-    embedding: embeddings[index],
-  }));
-
-  const qdrantResult =
-    await resolvedQdrantService.persistChunks(embeddedChunks);
-
-  if (
-    !Array.isArray(qdrantResult?.pointIds) ||
-    qdrantResult.pointIds.length !== chunks.length
-  ) {
-    throw new Error(
-      "Qdrant point ID count must match the number of document chunks.",
-    );
-  }
-
-  if (qdrantResult.persistedCount !== chunks.length) {
-    throw new Error(
-      "Qdrant persisted count must match the number of document chunks.",
-    );
-  }
-
-  const metadataResult = await persistChunkMetadataFn({
-    chunks,
-    pointIds: qdrantResult.pointIds,
-    materialId: String(processingInput.materialId),
-    userId: String(processingInput.userId),
-    documentChunkModel,
-  });
-
-  if (metadataResult.persistedCount !== chunks.length) {
-    throw new Error(
-      "Persisted metadata count must match the number of document chunks.",
-    );
-  }
-
-  const readyUpdate = await updateMaterialStatusFn({
-    materialId,
-    userId,
-  });
-
-  if (readyUpdate?.matchedCount !== 1) {
-    const error = new Error(
-      "Material could not be marked as READY because it is no longer in PROCESSING state.",
-    );
-
-    error.statusCode = 409;
-
-    throw error;
-  }
-
-  return {
-    materialId: String(processingInput.materialId),
-    processingStatus: "READY",
-    chunkCount: chunks.length,
-    vectorCount: qdrantResult.persistedCount,
-    metadataCount: metadataResult.persistedCount,
-  };
 };
