@@ -7,6 +7,13 @@ const createDependencies = (overrides = {}) => {
   const calls = [];
   const failureRecords = [];
 
+  const logs = [];
+
+  const logger = {
+    info: (event) => logs.push(event),
+    error: (event) => logs.push(event),
+  };
+
   const chunks = [
     {
       chunkId: "chunk-001",
@@ -180,7 +187,9 @@ const createDependencies = (overrides = {}) => {
     calls,
     chunks,
     failureRecords,
+    logs,
     dependencies: {
+      logger,
       ...dependencies,
       ...overrides,
     },
@@ -531,7 +540,7 @@ test("preserves the original processing error when failure recording also fails"
   const extractionError = new Error("PDF extraction failed");
   const recordingError = new Error("MongoDB failure recorder failed");
 
-  const { calls, dependencies } = createDependencies({
+  const { calls, dependencies, logs } = createDependencies({
     extractPdfTextFn: async () => {
       calls.push("extractPdfText");
       throw extractionError;
@@ -546,6 +555,14 @@ test("preserves the original processing error when failure recording also fails"
   await assert.rejects(runPipeline(dependencies), extractionError);
 
   assert.equal(calls.at(-1), "recordProcessingFailure");
+
+  const failureRecordingLog = logs.find(
+    (log) => log.event === "FAILURE_RECORDING_FAILED",
+  );
+
+  assert.ok(failureRecordingLog);
+  assert.equal(failureRecordingLog.stage, "TEXT_EXTRACTION");
+  assert.equal(failureRecordingLog.errorName, "Error");
 });
 
 test("does not record processing failure for precondition errors", async () => {
@@ -566,4 +583,106 @@ test("does not record processing failure for precondition errors", async () => {
 
   assert.deepEqual(failureRecords, []);
   assert.equal(calls.includes("recordProcessingFailure"), false);
+});
+
+test("emits processing and stage lifecycle logs on successful processing", async () => {
+  const { dependencies, logs } = createDependencies();
+
+  await runPipeline(dependencies);
+
+  assert.equal(logs[0].event, "PROCESSING_STARTED");
+
+  const stageStarted = logs.filter((log) => log.event === "STAGE_STARTED");
+
+  const stageCompleted = logs.filter((log) => log.event === "STAGE_COMPLETED");
+
+  assert.equal(stageStarted.length, 9);
+  assert.equal(stageCompleted.length, 9);
+
+  assert.equal(logs.at(-1).event, "PROCESSING_COMPLETED");
+
+  assert.equal(logs.at(-1).processingStatus, "READY");
+
+  assert.ok(logs.every((log) => log.materialId === "material-123"));
+
+  assert.ok(
+    logs.every(
+      (log) =>
+        typeof log.timestamp === "string" &&
+        !Number.isNaN(Date.parse(log.timestamp)),
+    ),
+  );
+});
+
+test("records the failed stage without exposing the original error message", async () => {
+  const sensitiveError = new Error("Provider failed with secret-api-key");
+
+  const { dependencies, logs } = createDependencies({
+    extractPdfTextFn: async () => {
+      throw sensitiveError;
+    },
+  });
+
+  await assert.rejects(runPipeline(dependencies), sensitiveError);
+
+  const failureLog = logs.find((log) => log.event === "STAGE_FAILED");
+
+  assert.equal(failureLog.stage, "TEXT_EXTRACTION");
+  assert.equal(failureLog.errorName, "Error");
+
+  assert.equal(JSON.stringify(logs).includes("secret-api-key"), false);
+});
+
+test("does not emit a processing failure event for precondition errors", async () => {
+  const preconditionError = new Error("Not eligible");
+
+  preconditionError.isPreconditionError = true;
+
+  const { dependencies, logs } = createDependencies({
+    prepareMaterial: async () => {
+      throw preconditionError;
+    },
+  });
+
+  await assert.rejects(runPipeline(dependencies), preconditionError);
+
+  assert.equal(
+    logs.some((log) => log.event === "STAGE_FAILED"),
+    false,
+  );
+});
+
+test("logging failures do not interrupt successful processing", async () => {
+  const logger = {
+    info: () => {
+      throw new Error("Logging system unavailable");
+    },
+    error: () => {
+      throw new Error("Logging system unavailable");
+    },
+  };
+
+  const { dependencies } = createDependencies({
+    logger,
+  });
+
+  const result = await runPipeline(dependencies);
+
+  assert.equal(result.processingStatus, "READY");
+});
+
+test("records a non-negative numeric duration for every completed stage", async () => {
+  const { dependencies, logs } = createDependencies();
+
+  await runPipeline(dependencies);
+
+  const completedStages = logs.filter((log) => log.event === "STAGE_COMPLETED");
+
+  assert.equal(completedStages.length, 9);
+
+  for (const log of completedStages) {
+    assert.equal(typeof log.durationMs, "number");
+    assert.ok(Number.isFinite(log.durationMs));
+    assert.ok(log.durationMs >= 0);
+  }
 });
