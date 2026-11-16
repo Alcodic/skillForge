@@ -60,6 +60,67 @@ export const prepareMaterialForProcessing = async ({ materialId, userId }) => {
   };
 };
 
+export const cleanupStaleChunkData = async ({
+  chunks,
+  materialId,
+  userId,
+  documentChunkModel = DocumentChunk,
+  qdrantService,
+}) => {
+  if (!Array.isArray(chunks)) {
+    throw new TypeError("Chunks must be provided as an array.");
+  }
+
+  if (!qdrantService?.deletePoints) {
+    throw new Error("Qdrant point deletion service is unavailable.");
+  }
+
+  const currentChunkIds = chunks.map((chunk) => chunk.chunkId);
+
+  const staleFilter = {
+    materialId,
+    userId,
+    chunkId: { $nin: currentChunkIds },
+  };
+
+  const staleChunks = await documentChunkModel
+    .find(staleFilter)
+    .select("qdrantPointId")
+    .lean();
+
+  if (staleChunks.length === 0) {
+    return {
+      deletedVectorCount: 0,
+      deletedMetadataCount: 0,
+    };
+  }
+
+  const stalePointIds = staleChunks.map((chunk) => chunk.qdrantPointId);
+
+  if (
+    !stalePointIds.every(
+      (pointId) => typeof pointId === "string" && pointId.trim(),
+    )
+  ) {
+    throw new Error("Stale chunk contains an invalid Qdrant point ID.");
+  }
+
+  // Delete vectors first. If this fails, retain MongoDB metadata.
+  const deletionResult = await qdrantService.deletePoints(stalePointIds);
+
+  if (deletionResult.deletedCount !== new Set(stalePointIds).size) {
+    throw new Error("Stale Qdrant vector cleanup was incomplete.");
+  }
+
+  // Delete metadata only after successful Qdrant cleanup.
+  const metadataResult = await documentChunkModel.deleteMany(staleFilter);
+
+  return {
+    deletedVectorCount: deletionResult.deletedCount,
+    deletedMetadataCount: metadataResult.deletedCount,
+  };
+};
+
 export const persistChunkMetadata = async ({
   chunks,
   pointIds,
@@ -171,6 +232,7 @@ const recordMaterialProcessingFailure = async ({
     EMBEDDING_GENERATION: "Document embedding generation failed.",
     VECTOR_PERSISTENCE: "Vector database persistence failed.",
     METADATA_PERSISTENCE: "Document chunk metadata persistence failed.",
+    STALE_DATA_CLEANUP: "Stale document chunk cleanup failed.",
     READY_TRANSITION: "Material could not transition to READY status.",
   };
 
@@ -211,6 +273,7 @@ export const processMaterialDocument = async ({
   persistChunkMetadataFn = persistChunkMetadata,
   updateMaterialStatusFn = markMaterialReady,
   recordProcessingFailureFn = recordMaterialProcessingFailure,
+  cleanupStaleChunkDataFn = cleanupStaleChunkData,
 }) => {
   let currentStage = "PREPARATION";
 
@@ -303,6 +366,16 @@ export const processMaterialDocument = async ({
       );
     }
 
+    currentStage = "STALE_DATA_CLEANUP";
+
+    const cleanupResult = await cleanupStaleChunkDataFn({
+      chunks,
+      materialId: String(processingInput.materialId),
+      userId: String(processingInput.userId),
+      documentChunkModel,
+      qdrantService: resolvedQdrantService,
+    });
+
     currentStage = "READY_TRANSITION";
 
     const readyUpdate = await updateMaterialStatusFn({
@@ -326,6 +399,8 @@ export const processMaterialDocument = async ({
       chunkCount: chunks.length,
       vectorCount: qdrantResult.persistedCount,
       metadataCount: metadataResult.persistedCount,
+      deletedVectorCount: cleanupResult.deletedVectorCount,
+      deletedMetadataCount: cleanupResult.deletedMetadataCount,
     };
   } catch (error) {
     // Request and precondition errors must not mark a material as FAILED.

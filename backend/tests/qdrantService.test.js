@@ -24,6 +24,7 @@ const createFakeClient = ({
     createCollection: [],
     createPayloadIndex: [],
     upsert: [],
+    delete: [],
   };
 
   return {
@@ -68,6 +69,11 @@ const createFakeClient = ({
       };
 
       return true;
+    },
+
+    async delete(collectionName, options) {
+      calls.delete.push({ collectionName, options });
+      return { status: "completed" };
     },
   };
 };
@@ -331,3 +337,73 @@ test("rejects chunks missing ownership fields before upserting", async () => {
 
   assert.equal(client.calls.upsert.length, 0);
 });
+
+test("deletes Qdrant points using the configured collection and waits for completion", async () => {
+  const client = createFakeClient();
+  const service = createQdrantService({ client, config });
+
+  const pointIds = ["point-001", "point-002"];
+
+  const result = await service.deletePoints(pointIds);
+
+  assert.equal(client.calls.delete.length, 1);
+
+  assert.deepEqual(client.calls.delete[0], {
+    collectionName: config.collectionName,
+    options: {
+      wait: true,
+      points: pointIds,
+    },
+  });
+
+  assert.equal(result.deletedCount, 2);
+  assert.deepEqual(result.result, { status: "completed" });
+});
+
+test("does not call Qdrant when deleting an empty point ID array", async () => {
+  const client = createFakeClient();
+  const service = createQdrantService({ client, config });
+
+  const result = await service.deletePoints([]);
+
+  assert.deepEqual(result, { deletedCount: 0 });
+  assert.equal(client.calls.delete.length, 0);
+});
+
+test("deduplicates point IDs before deleting them", async () => {
+  const client = createFakeClient();
+  const service = createQdrantService({ client, config });
+
+  const result = await service.deletePoints([
+    "point-001",
+    "point-002",
+    "point-001",
+  ]);
+
+  assert.equal(result.deletedCount, 2);
+
+  assert.deepEqual(client.calls.delete[0].options.points, [
+    "point-001",
+    "point-002",
+  ]);
+});
+
+test("rejects invalid point ID input before calling Qdrant", async () => {
+  const client = createFakeClient();
+  const service = createQdrantService({ client, config });
+
+  await assert.rejects(
+    service.deletePoints("point-001"),
+    /must be provided as an array/,
+  );
+
+  await assert.rejects(
+    service.deletePoints(["point-001", ""]),
+    /non-empty string/,
+  );
+
+  assert.equal(client.calls.delete.length, 0);
+});
+
+
+

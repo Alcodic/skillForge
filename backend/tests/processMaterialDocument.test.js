@@ -154,6 +154,26 @@ const createDependencies = (overrides = {}) => {
         matchedCount: 1,
       };
     },
+
+    cleanupStaleChunkDataFn: async ({
+      chunks: cleanupChunks,
+      materialId,
+      userId,
+      qdrantService,
+    }) => {
+      calls.push("cleanupStaleChunkData");
+
+      assert.equal(cleanupChunks.length, 2);
+      assert.equal(materialId, "material-123");
+      assert.equal(userId, "user-456");
+
+      assert.equal(typeof qdrantService.persistChunks, "function");
+
+      return {
+        deletedVectorCount: 1,
+        deletedMetadataCount: 1,
+      };
+    },
   };
 
   return {
@@ -187,6 +207,7 @@ test("orchestrates processing through embedding, Qdrant, and MongoDB metadata pe
     "embedTexts",
     "qdrant.persistChunks",
     "persistChunkMetadata",
+    "cleanupStaleChunkData",
     "updateMaterialStatus",
   ]);
 
@@ -196,10 +217,37 @@ test("orchestrates processing through embedding, Qdrant, and MongoDB metadata pe
     chunkCount: 2,
     vectorCount: 2,
     metadataCount: 2,
+    deletedVectorCount: 1,
+    deletedMetadataCount: 1,
   });
 
   // Successful processing must not record a failure.
   assert.deepEqual(failureRecords, []);
+});
+
+test("records STALE_DATA_CLEANUP failure and never marks the material as READY", async () => {
+  const cleanupError = new Error("Stale chunk cleanup failed");
+
+  const { calls, dependencies, failureRecords } = createDependencies({
+    cleanupStaleChunkDataFn: async () => {
+      calls.push("cleanupStaleChunkData");
+      throw cleanupError;
+    },
+  });
+
+  await assert.rejects(runPipeline(dependencies), cleanupError);
+
+  assert.equal(calls.includes("persistChunkMetadata"), true);
+  assert.equal(calls.includes("cleanupStaleChunkData"), true);
+  assert.equal(calls.includes("updateMaterialStatus"), false);
+
+  assert.deepEqual(failureRecords, [
+    {
+      materialId: "material-123",
+      userId: "user-456",
+      stage: "STALE_DATA_CLEANUP",
+    },
+  ]);
 });
 
 test("rejects zero chunks and never marks the material as READY", async () => {

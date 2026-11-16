@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { persistChunkMetadata } from "../src/services/documentProcessingService.js";
+import {
+  persistChunkMetadata,
+  cleanupStaleChunkData,
+} from "../src/services/documentProcessingService.js";
 
 const createFakeDocumentChunkModel = () => {
   const calls = [];
@@ -16,6 +19,61 @@ const createFakeDocumentChunkModel = () => {
         upsertedCount: operations.length,
       };
     },
+  };
+};
+
+const createFakeCleanupModel = (staleChunks = [], events = []) => {
+  const calls = [];
+
+  return {
+    calls,
+
+    find(filter) {
+      calls.push({ method: "find", filter });
+      events.push("mongo.find");
+
+      return {
+        select(fields) {
+          calls.push({ method: "select", fields });
+
+          return {
+            async lean() {
+              calls.push({ method: "lean" });
+              return staleChunks;
+            },
+          };
+        },
+      };
+    },
+
+    async deleteMany(filter) {
+      calls.push({ method: "deleteMany", filter });
+      events.push("mongo.deleteMany");
+
+      return {
+        acknowledged: true,
+        deletedCount: staleChunks.length,
+      };
+    },
+  };
+};
+
+const createFakeQdrantService = (overrides = {}, events = []) => {
+  const calls = [];
+
+  return {
+    calls,
+
+    async deletePoints(pointIds) {
+      calls.push([...pointIds]);
+      events.push("qdrant.deletePoints");
+
+      return {
+        deletedCount: new Set(pointIds).size,
+      };
+    },
+
+    ...overrides,
   };
 };
 
@@ -202,4 +260,165 @@ test("uses chunkId upserts to support retry-safe persistence", async () => {
       assert.ok(operation.updateOne.filter.chunkId);
     }
   }
+});
+
+test("finds stale chunks using material and user ownership and deletes vectors before metadata", async () => {
+  const staleChunks = [
+    { qdrantPointId: "stale-point-001" },
+    { qdrantPointId: "stale-point-002" },
+  ];
+
+  const events = [];
+
+  const documentChunkModel = createFakeCleanupModel(staleChunks, events);
+  const qdrantService = createFakeQdrantService({}, events);
+
+  const result = await cleanupStaleChunkData({
+    chunks: createChunks(),
+    materialId: "material-123",
+    userId: "user-456",
+    documentChunkModel,
+    qdrantService,
+  });
+
+  const expectedFilter = {
+    materialId: "material-123",
+    userId: "user-456",
+    chunkId: {
+      $nin: ["chunk-001", "chunk-002"],
+    },
+  };
+
+  assert.deepEqual(result, {
+    deletedVectorCount: 2,
+    deletedMetadataCount: 2,
+  });
+
+  assert.deepEqual(documentChunkModel.calls[0], {
+    method: "find",
+    filter: expectedFilter,
+  });
+
+  assert.deepEqual(qdrantService.calls, [
+    ["stale-point-001", "stale-point-002"],
+  ]);
+
+  const methodNames = documentChunkModel.calls.map((call) => call.method);
+
+  assert.ok(methodNames.indexOf("find") < methodNames.indexOf("deleteMany"));
+  assert.ok(methodNames.includes("deleteMany"));
+
+  assert.deepEqual(
+    documentChunkModel.calls.find((call) => call.method === "deleteMany")
+      .filter,
+    expectedFilter,
+  );
+});
+
+test("does not call Qdrant or delete metadata when no stale chunks exist", async () => {
+  const documentChunkModel = createFakeCleanupModel([]);
+  const qdrantService = createFakeQdrantService();
+
+  const result = await cleanupStaleChunkData({
+    chunks: createChunks(),
+    materialId: "material-123",
+    userId: "user-456",
+    documentChunkModel,
+    qdrantService,
+  });
+
+  assert.deepEqual(result, {
+    deletedVectorCount: 0,
+    deletedMetadataCount: 0,
+  });
+
+  assert.deepEqual(qdrantService.calls, []);
+
+  assert.equal(
+    documentChunkModel.calls.some((call) => call.method === "deleteMany"),
+    false,
+  );
+});
+
+test("does not delete MongoDB metadata when Qdrant vector deletion fails", async () => {
+  const documentChunkModel = createFakeCleanupModel([
+    { qdrantPointId: "stale-point-001" },
+  ]);
+
+  const qdrantError = new Error("Qdrant deletion failed");
+
+  const qdrantService = createFakeQdrantService({
+    async deletePoints() {
+      throw qdrantError;
+    },
+  });
+
+  await assert.rejects(
+    cleanupStaleChunkData({
+      chunks: createChunks(),
+      materialId: "material-123",
+      userId: "user-456",
+      documentChunkModel,
+      qdrantService,
+    }),
+    qdrantError,
+  );
+
+  assert.equal(
+    documentChunkModel.calls.some((call) => call.method === "deleteMany"),
+    false,
+  );
+});
+
+test("rejects stale chunks with invalid Qdrant point IDs without deleting metadata", async () => {
+  const documentChunkModel = createFakeCleanupModel([
+    { qdrantPointId: "stale-point-001" },
+    { qdrantPointId: null },
+  ]);
+
+  const qdrantService = createFakeQdrantService();
+
+  await assert.rejects(
+    cleanupStaleChunkData({
+      chunks: createChunks(),
+      materialId: "material-123",
+      userId: "user-456",
+      documentChunkModel,
+      qdrantService,
+    }),
+    {
+      message: "Stale chunk contains an invalid Qdrant point ID.",
+    },
+  );
+
+  assert.deepEqual(qdrantService.calls, []);
+
+  assert.equal(
+    documentChunkModel.calls.some((call) => call.method === "deleteMany"),
+    false,
+  );
+});
+
+test("rejects cleanup when Qdrant point deletion is unavailable", async () => {
+  const documentChunkModel = createFakeCleanupModel([
+    { qdrantPointId: "stale-point-001" },
+  ]);
+
+  await assert.rejects(
+    cleanupStaleChunkData({
+      chunks: createChunks(),
+      materialId: "material-123",
+      userId: "user-456",
+      documentChunkModel,
+      qdrantService: {},
+    }),
+    {
+      message: "Qdrant point deletion service is unavailable.",
+    },
+  );
+
+  assert.equal(
+    documentChunkModel.calls.some((call) => call.method === "deleteMany"),
+    false,
+  );
 });

@@ -41,6 +41,36 @@ const createQdrantService = ({ client, config } = {}) => {
       apiKey: resolvedConfig.apiKey,
     });
 
+  const deletePoints = async (pointIds) => {
+    if (!Array.isArray(pointIds)) {
+      throw new TypeError("Qdrant point IDs must be provided as an array.");
+    }
+
+    if (pointIds.length === 0) {
+      return { deletedCount: 0 };
+    }
+
+    if (
+      !pointIds.every(
+        (pointId) => typeof pointId === "string" && pointId.trim(),
+      )
+    ) {
+      throw new TypeError("Every Qdrant point ID must be a non-empty string.");
+    }
+
+    const uniquePointIds = [...new Set(pointIds)];
+
+    const result = await resolvedClient.delete(resolvedConfig.collectionName, {
+      wait: true,
+      points: uniquePointIds,
+    });
+
+    return {
+      deletedCount: uniquePointIds.length,
+      result,
+    };
+  };
+
   const initializeCollection = async () => {
     const { collections } = await resolvedClient.getCollections();
 
@@ -211,7 +241,7 @@ const createQdrantService = ({ client, config } = {}) => {
     };
   };
 
-  return { initializeCollection, persistChunks };
+  return { initializeCollection, persistChunks, deletePoints };
 };
 
 export { createQdrantService };
