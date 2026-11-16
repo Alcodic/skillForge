@@ -686,3 +686,133 @@ test("records a non-negative numeric duration for every completed stage", async 
     assert.ok(log.durationMs >= 0);
   }
 });
+
+test("records TEXT_EXTRACTION failure when extraction returns no usable document content", async () => {
+  const extractionError = new Error("PDF contains no extractable text.");
+
+  const { calls, dependencies, failureRecords } = createDependencies({
+    extractPdfTextFn: async () => {
+      calls.push("extractPdfText");
+      throw extractionError;
+    },
+  });
+
+  await assert.rejects(runPipeline(dependencies), extractionError);
+
+  assert.deepEqual(calls, [
+    "prepareMaterial",
+    "extractPdfText",
+    "recordProcessingFailure",
+  ]);
+
+  assert.deepEqual(failureRecords, [
+    {
+      materialId: "material-123",
+      userId: "user-456",
+      stage: "TEXT_EXTRACTION",
+    },
+  ]);
+
+  assert.equal(calls.includes("normalizeExtractionResult"), false);
+  assert.equal(calls.includes("chunkText"), false);
+  assert.equal(calls.includes("embedTexts"), false);
+  assert.equal(calls.includes("qdrant.persistChunks"), false);
+  assert.equal(calls.includes("persistChunkMetadata"), false);
+  assert.equal(calls.includes("updateMaterialStatus"), false);
+});
+
+test("records TEXT_NORMALIZATION failure when normalized document content is empty", async () => {
+  const normalizationError = new Error("Normalized PDF content is empty.");
+
+  const { calls, dependencies, failureRecords } = createDependencies({
+    normalizeExtractionResultFn: () => {
+      calls.push("normalizeExtractionResult");
+      throw normalizationError;
+    },
+  });
+
+  await assert.rejects(runPipeline(dependencies), normalizationError);
+
+  assert.deepEqual(calls, [
+    "prepareMaterial",
+    "extractPdfText",
+    "normalizeExtractionResult",
+    "recordProcessingFailure",
+  ]);
+
+  assert.deepEqual(failureRecords, [
+    {
+      materialId: "material-123",
+      userId: "user-456",
+      stage: "TEXT_NORMALIZATION",
+    },
+  ]);
+
+  assert.equal(calls.includes("chunkText"), false);
+  assert.equal(calls.includes("embedTexts"), false);
+  assert.equal(calls.includes("qdrant.persistChunks"), false);
+  assert.equal(calls.includes("persistChunkMetadata"), false);
+  assert.equal(calls.includes("updateMaterialStatus"), false);
+});
+
+test("records TEXT_NORMALIZATION failure when extraction pages are malformed", async () => {
+  const normalizationError = new TypeError("Invalid PDF extraction page.");
+
+  const { calls, dependencies, failureRecords } = createDependencies({
+    normalizeExtractionResultFn: () => {
+      calls.push("normalizeExtractionResult");
+      throw normalizationError;
+    },
+  });
+
+  await assert.rejects(runPipeline(dependencies), normalizationError);
+
+  assert.deepEqual(failureRecords, [
+    {
+      materialId: "material-123",
+      userId: "user-456",
+      stage: "TEXT_NORMALIZATION",
+    },
+  ]);
+
+  assert.equal(calls.includes("chunkText"), false);
+  assert.equal(calls.includes("embedTexts"), false);
+  assert.equal(calls.includes("updateMaterialStatus"), false);
+});
+
+test("never reaches READY when extraction or normalization fails", async (t) => {
+  const failureScenarios = [
+    {
+      name: "extraction failure",
+      stage: "TEXT_EXTRACTION",
+      extractPdfTextFn: async () => {
+        throw new Error("PDF extraction failed.");
+      },
+    },
+    {
+      name: "normalization failure",
+      stage: "TEXT_NORMALIZATION",
+      normalizeExtractionResultFn: () => {
+        throw new Error("Normalized PDF content is empty.");
+      },
+    },
+  ];
+
+  for (const scenario of failureScenarios) {
+    await t.test(scenario.name, async () => {
+      const { calls, dependencies, failureRecords } =
+        createDependencies(scenario);
+
+      await assert.rejects(runPipeline(dependencies));
+
+      assert.equal(calls.includes("updateMaterialStatus"), false);
+
+      assert.equal(
+        failureRecords.some((failure) => failure.stage === scenario.stage),
+        true,
+      );
+
+      assert.equal(calls.includes("qdrant.persistChunks"), false);
+    });
+  }
+});

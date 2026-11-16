@@ -1,64 +1,59 @@
+import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { extractPdfText } from "../src/services/pdfExtractionService.js";
-import { normalizeExtractionResult } from "../src/services/textNormalizationService.js";
 
-const pdfBuffer = await readFile(
-  new URL("./fixtures/skillforge-test.pdf", import.meta.url),
-);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-const result = await extractPdfText(pdfBuffer);
+const fixturePath = path.join(__dirname, "fixtures", "skillforge-test.pdf");
 
-const normalizedResult = normalizeExtractionResult(result);
+test("extracts text and page metadata from a valid PDF", async () => {
+  const pdfBuffer = await readFile(fixturePath);
+  const result = await extractPdfText(pdfBuffer);
 
-const searchTerm = "Current Foundation";
+  assert.equal(typeof result.text, "string");
+  assert.ok(result.text.trim().length > 0);
 
-const rawIndex = result.text.indexOf(searchTerm);
-const normalizedIndex = normalizedResult.text.indexOf(searchTerm);
+  assert.ok(result.pageCount > 0);
+  assert.equal(result.pages.length, result.pageCount);
 
-console.log("\n--- RAW EXTRACTION ---");
-console.log(
-  JSON.stringify(result.text.slice(rawIndex, rawIndex + 250), null, 2),
-);
+  for (const page of result.pages) {
+    assert.equal(typeof page.pageNumber, "number");
+    assert.equal(typeof page.text, "string");
+  }
 
-console.log("\n--- NORMALIZED EXTRACTION ---");
-console.log(
-  JSON.stringify(
-    normalizedResult.text.slice(normalizedIndex, normalizedIndex + 250),
-    null,
-    2,
-  ),
-);
+  assert.equal(result.text, result.pages.map((page) => page.text).join("\n\n"));
+});
 
-// Verify page count is preserved.
-assert.equal(normalizedResult.pageCount, result.pageCount);
+test("rejects non-Buffer PDF input", async () => {
+  await assert.rejects(extractPdfText("not a buffer"), {
+    name: "TypeError",
+    message: "PDF input must be a Node.js Buffer.",
+  });
+});
 
-// Verify page numbers and ordering are preserved.
-assert.deepEqual(
-  normalizedResult.pages.map((page) => page.pageNumber),
-  result.pages.map((page) => page.pageNumber),
-);
+test("rejects an empty PDF buffer", async () => {
+  await assert.rejects(extractPdfText(Buffer.alloc(0)), {
+    message: "Cannot extract text from an empty PDF buffer.",
+  });
+});
 
-// Verify complete text matches normalized page text.
-assert.equal(
-  normalizedResult.text,
-  normalizedResult.pages.map((page) => page.text).join("\n\n"),
-);
+test("rejects malformed PDF input", async () => {
+  await assert.rejects(
+    extractPdfText(Buffer.from("This is not a valid PDF document.")),
+  );
+});
 
-console.log("PDF normalization assertions passed.");
+test("rejects a PDF containing no extractable text", async () => {
+  const blankPdfBuffer = await readFile(
+    path.join(__dirname, "fixtures", "skillforge-blank-test.pdf"),
+  );
 
-console.log(
-  "Normalized PDF result:",
-  JSON.stringify(normalizedResult, null, 2),
-);
-
-console.log("Page count:", normalizedResult.pageCount);
-console.log("Pages extracted:", normalizedResult.pages.length);
-console.log("Total characters:", normalizedResult.text.length);
-
-console.log("\nFirst normalized page preview:\n");
-console.log(normalizedResult.pages[0]?.text.slice(0, 500));
-
-console.log("\nComplete normalized text preview:\n");
-console.log(normalizedResult.text.slice(0, 1000));
+  await assert.rejects(extractPdfText(blankPdfBuffer), {
+    message: "PDF contains no extractable text.",
+  });
+});
