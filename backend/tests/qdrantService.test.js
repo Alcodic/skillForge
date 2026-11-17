@@ -446,3 +446,48 @@ test("propagates the original Qdrant upsert error without returning a successful
   assert.equal(options.wait, true);
   assert.equal(options.points.length, 1);
 });
+
+test("preserves the correct user and material ownership metadata for every Qdrant point", async () => {
+  const client = createFakeClient();
+  const service = createQdrantService({ client, config });
+
+  const chunks = [
+    {
+      chunkId: "user-a-chunk-001",
+      sequence: 0,
+      text: "Content belonging to user A.",
+      startOffset: 0,
+      endOffset: 29,
+      materialId: "material-a",
+      userId: "user-a",
+      embedding: Array(config.vectorSize).fill(0.1),
+    },
+    {
+      chunkId: "user-b-chunk-001",
+      sequence: 0,
+      text: "Content belonging to user B.",
+      startOffset: 0,
+      endOffset: 29,
+      materialId: "material-b",
+      userId: "user-b",
+      embedding: Array(config.vectorSize).fill(0.2),
+    },
+  ];
+
+  const result = await service.persistChunks(chunks);
+
+  assert.equal(result.persistedCount, 2);
+  assert.equal(client.calls.upsert.length, 1);
+
+  const { options } = client.calls.upsert[0];
+
+  assert.equal(options.points.length, 2);
+
+  const [userAPoint, userBPoint] = options.points;
+
+  assert.equal(userAPoint.payload.userId, "user-a");
+  assert.equal(userAPoint.payload.materialId, "material-a");
+
+  assert.equal(userBPoint.payload.userId, "user-b");
+  assert.equal(userBPoint.payload.materialId, "material-b");
+});

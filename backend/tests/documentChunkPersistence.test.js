@@ -422,3 +422,58 @@ test("rejects cleanup when Qdrant point deletion is unavailable", async () => {
     false,
   );
 });
+
+test("keeps chunk metadata scoped to the correct user and material", async () => {
+  const documentChunkModel = createFakeDocumentChunkModel();
+
+  const chunks = createChunks();
+
+  await persistChunkMetadata({
+    chunks,
+    pointIds: ["user-a-point-001", "user-a-point-002"],
+    materialId: "material-a",
+    userId: "user-a",
+    documentChunkModel,
+  });
+
+  await persistChunkMetadata({
+    chunks,
+    pointIds: ["user-b-point-001", "user-b-point-002"],
+    materialId: "material-b",
+    userId: "user-b",
+    documentChunkModel,
+  });
+
+  assert.equal(documentChunkModel.calls.length, 2);
+
+  const [userAWrite, userBWrite] = documentChunkModel.calls;
+
+  for (const operation of userAWrite.operations) {
+    assert.deepEqual(operation.updateOne.filter, {
+      chunkId: operation.updateOne.update.$set.chunkId,
+      materialId: "material-a",
+      userId: "user-a",
+    });
+
+    assert.equal(operation.updateOne.update.$set.materialId, "material-a");
+
+    assert.equal(operation.updateOne.update.$set.userId, "user-a");
+  }
+
+  for (const operation of userBWrite.operations) {
+    assert.deepEqual(operation.updateOne.filter, {
+      chunkId: operation.updateOne.update.$set.chunkId,
+      materialId: "material-b",
+      userId: "user-b",
+    });
+
+    assert.equal(operation.updateOne.update.$set.materialId, "material-b");
+
+    assert.equal(operation.updateOne.update.$set.userId, "user-b");
+  }
+
+  assert.notDeepEqual(
+    userAWrite.operations[0].updateOne.filter,
+    userBWrite.operations[0].updateOne.filter,
+  );
+});
