@@ -162,6 +162,27 @@ test("persists chunk metadata with matching Qdrant point IDs", async () => {
   );
 });
 
+test("propagates MongoDB bulkWrite failures", async () => {
+  const persistenceError = new Error("MongoDB bulkWrite failed");
+
+  const documentChunkModel = {
+    bulkWrite: async () => {
+      throw persistenceError;
+    },
+  };
+
+  await assert.rejects(
+    persistChunkMetadata({
+      chunks: createChunks(),
+      pointIds: ["qdrant-point-001", "qdrant-point-002"],
+      materialId: "material-123",
+      userId: "user-456",
+      documentChunkModel,
+    }),
+    (error) => error === persistenceError,
+  );
+});
+
 test("returns zero for empty chunks without calling MongoDB", async () => {
   const documentChunkModel = createFakeDocumentChunkModel();
 

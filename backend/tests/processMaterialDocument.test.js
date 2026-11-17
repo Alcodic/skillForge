@@ -447,6 +447,35 @@ test("records METADATA_PERSISTENCE failure for a metadata count mismatch", async
   assert.equal(calls.at(-1), "recordProcessingFailure");
 });
 
+test("records METADATA_PERSISTENCE failure when MongoDB metadata persistence throws", async () => {
+  const persistenceError = new Error("MongoDB bulkWrite failed");
+
+  const { calls, dependencies, failureRecords } = createDependencies({
+    persistChunkMetadataFn: async () => {
+      calls.push("persistChunkMetadata");
+      throw persistenceError;
+    },
+  });
+
+  await assert.rejects(
+    runPipeline(dependencies),
+    (error) => error === persistenceError,
+  );
+
+  assert.equal(calls.includes("persistChunkMetadata"), true);
+  assert.equal(calls.includes("updateMaterialStatus"), false);
+
+  assert.deepEqual(failureRecords, [
+    {
+      materialId: "material-123",
+      userId: "user-456",
+      stage: "METADATA_PERSISTENCE",
+    },
+  ]);
+
+  assert.equal(calls.at(-1), "recordProcessingFailure");
+});
+
 test("records READY_TRANSITION failure when the material cannot transition from PROCESSING to READY", async () => {
   const { calls, dependencies, failureRecords } = createDependencies({
     updateMaterialStatusFn: async () => {
