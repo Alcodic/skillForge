@@ -16,6 +16,7 @@ const createFakeClient = ({
   vectorSize = 1024,
   distance = "Cosine",
   payloadSchema = {},
+  upsertError = null,
 } = {}) => {
   let exists = initiallyExists;
 
@@ -58,6 +59,11 @@ const createFakeClient = ({
 
     async upsert(collectionName, options) {
       calls.upsert.push({ collectionName, options });
+
+      if (upsertError) {
+        throw upsertError;
+      }
+
       return { status: "completed" };
     },
 
@@ -405,5 +411,38 @@ test("rejects invalid point ID input before calling Qdrant", async () => {
   assert.equal(client.calls.delete.length, 0);
 });
 
+test("propagates the original Qdrant upsert error without returning a successful persistence result", async () => {
+  const qdrantError = new Error("Qdrant upsert request failed.");
 
+  const client = createFakeClient({
+    upsertError: qdrantError,
+  });
 
+  const service = createQdrantService({ client, config });
+
+  const chunk = {
+    chunkId: "failure-test-chunk",
+    sequence: 0,
+    text: "Example document chunk.",
+    startOffset: 0,
+    endOffset: 24,
+    materialId: "material-123",
+    userId: "user-456",
+    embedding: Array(config.vectorSize).fill(0.25),
+  };
+
+  await assert.rejects(service.persistChunks([chunk]), (error) => {
+    assert.equal(error, qdrantError);
+    assert.equal(error.message, "Qdrant upsert request failed.");
+
+    return true;
+  });
+
+  assert.equal(client.calls.upsert.length, 1);
+
+  const { collectionName, options } = client.calls.upsert[0];
+
+  assert.equal(collectionName, config.collectionName);
+  assert.equal(options.wait, true);
+  assert.equal(options.points.length, 1);
+});
