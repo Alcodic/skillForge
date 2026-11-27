@@ -43,6 +43,11 @@ const DocumentChunkSchema = new mongoose.Schema(
       ref: "User",
     },
 
+    text: {
+      type: String,
+      required: true,
+    },
+
     sequence: {
       type: Number,
       required: true,
