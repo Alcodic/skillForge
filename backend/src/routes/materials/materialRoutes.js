@@ -1,4 +1,5 @@
 import express from "express";
+import { getReaderContent } from "../../controllers/materials/readerController.js";
 
 import {
   getMaterials,
@@ -16,6 +17,7 @@ const router = express.Router();
 
 router.get("/", authMiddleware, getMaterials);
 router.get("/:id", authMiddleware, getMaterialById);
+router.get("/:id/reader", authMiddleware, getReaderContent);
 router.post(
   "/",
   authMiddleware,
@@ -26,4 +28,5 @@ router.post(
   uploadErrorMiddleware,
 );
 router.post("/:id/process", authMiddleware, processMaterial);
+
 export default router;
