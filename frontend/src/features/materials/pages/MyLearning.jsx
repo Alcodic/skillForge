@@ -1,6 +1,12 @@
-import { getMaterials, uploadMaterial } from "../api/materialsApi";
+import {
+  getMaterials,
+  uploadMaterial,
+  processMaterial,
+} from "../api/materialsApi";
+
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+
 import MaterialCard from "../components/MaterialCard";
 import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
@@ -20,6 +26,16 @@ function MyLearning() {
     queryFn: getMaterials,
   });
 
+  // Process an uploaded material.
+  const processMutation = useMutation({
+    mutationFn: processMaterial,
+
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["materials"] });
+    },
+  });
+
+  // Upload a material and then trigger document processing.
   const uploadMutation = useMutation({
     mutationFn: uploadMaterial,
 
@@ -34,6 +50,8 @@ function MyLearning() {
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
+
+      processMutation.mutate(_data.material.id);
     },
 
     onError: () => {
@@ -59,7 +77,6 @@ function MyLearning() {
     if (!file) return;
 
     const idempotencyKey = crypto.randomUUID();
-
     const normalizedTitle = title.trim();
 
     retryOperationsRef.current.set(idempotencyKey, {
@@ -153,7 +170,6 @@ function MyLearning() {
             <div>
               <p className="mb-2 text-sm font-medium">Learning material</p>
 
-              {/* Hidden file input */}
               <input
                 ref={fileInputRef}
                 id="material-file"
@@ -165,7 +181,6 @@ function MyLearning() {
               />
 
               {!file ? (
-                /* Empty file state */
                 <label
                   htmlFor="material-file"
                   className="flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-border bg-background px-6 py-10 text-center transition-colors hover:bg-muted"
@@ -183,9 +198,7 @@ function MyLearning() {
                   </span>
                 </label>
               ) : (
-                /* Selected file state */
                 <div className="relative rounded-xl border border-border bg-background p-5">
-                  {/* Remove file button */}
                   {!uploadMutation.isPending && (
                     <button
                       type="button"
@@ -204,7 +217,6 @@ function MyLearning() {
                   )}
 
                   <div className="flex flex-col gap-3 pr-0 sm:flex-row sm:items-center sm:justify-between sm:gap-6 sm:pr-10">
-                    {/* File information */}
                     <div className="min-w-0">
                       <div className="flex items-center gap-3">
                         <span className="rounded-lg border border-border px-2.5 py-1 text-xs font-medium">
@@ -221,7 +233,6 @@ function MyLearning() {
                       </p>
                     </div>
 
-                    {/* Change file button */}
                     {!uploadMutation.isPending && (
                       <label
                         htmlFor="material-file"
@@ -256,6 +267,22 @@ function MyLearning() {
 
                 <p className="mt-1 text-sm text-muted-foreground">
                   {uploadMutation.error.message}
+                </p>
+              </div>
+            )}
+
+            {/* Processing error */}
+            {processMutation.isError && (
+              <div
+                role="alert"
+                className="rounded-lg border border-border bg-background px-4 py-3"
+              >
+                <p className="text-sm font-medium">
+                  Material uploaded, but processing could not be completed.
+                </p>
+
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {processMutation.error.message}
                 </p>
               </div>
             )}

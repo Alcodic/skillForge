@@ -42,10 +42,8 @@ export async function getMaterialById(materialId) {
   return data.data;
 }
 
-export async function uploadMaterial({ title, file,idempotencyKey }) {
+export async function uploadMaterial({ title, file, idempotencyKey }) {
   const token = localStorage.getItem("token");
-
-  
 
   const formData = new FormData();
 
@@ -69,6 +67,60 @@ export async function uploadMaterial({ title, file,idempotencyKey }) {
 
   if (!data.success) {
     throw new Error(data.message || "Failed to upload material");
+  }
+
+  return data.data;
+}
+
+export async function processMaterial(materialId) {
+  const token = localStorage.getItem("token");
+
+  const response = await fetch(
+    `http://localhost:5001/api/materials/${materialId}/process`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  );
+
+  const data = await response.json();
+
+  if (!response.ok || !data.success) {
+    throw new Error(data.message || "Failed to process material");
+  }
+
+  return data.data;
+}
+
+export async function getMaterialReader(
+  materialId,
+  { limit = 20, afterSequence } = {},
+) {
+  const token = localStorage.getItem("token");
+
+  const params = new URLSearchParams({
+    limit: String(limit),
+  });
+
+  if (afterSequence !== undefined) {
+    params.set("afterSequence", String(afterSequence));
+  }
+
+  const response = await fetch(
+    `http://localhost:5001/api/materials/${materialId}/reader?${params.toString()}`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  );
+
+  const data = await response.json();
+
+  if (!response.ok || !data.success) {
+    throw new Error(data.message || "Failed to fetch reader content");
   }
 
   return data.data;

@@ -7,6 +7,12 @@ const STATUS_CONFIG = {
     badgeClass: "border border-border bg-muted text-muted-foreground",
   },
 
+  QUEUED: {
+    label: "Queued",
+    description: "Waiting to be prepared for learning...",
+    badgeClass: "border border-border bg-muted text-muted-foreground",
+  },
+
   PROCESSING: {
     label: "Processing",
     description: "Preparing material for learning...",
