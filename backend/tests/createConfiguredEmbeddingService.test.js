@@ -62,6 +62,24 @@ test("creates a configured embedding service", async () => {
   assert.equal(request.input_type, "document");
 });
 
+test("passes query input type to the Voyage provider", async () => {
+  const { fetchImpl, calls } = createMockFetch();
+
+  const embedTexts = createConfiguredEmbeddingService({
+    env: createTestEnv(),
+    inputType: "query",
+    fetchImpl,
+  });
+
+  await embedTexts(["What is RAG?"]);
+
+  assert.equal(calls.length, 1);
+
+  const request = JSON.parse(calls[0].options.body);
+
+  assert.equal(request.input_type, "query");
+});
+
 test("rejects unsupported embedding providers", () => {
   assert.throws(
     () =>

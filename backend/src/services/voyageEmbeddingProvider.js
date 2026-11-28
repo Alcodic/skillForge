@@ -1,9 +1,12 @@
 const VOYAGE_EMBEDDINGS_URL = "https://api.voyageai.com/v1/embeddings";
 
+const SUPPORTED_INPUT_TYPES = ["document", "query"];
+
 const createVoyageEmbeddingProvider = ({
   apiKey = process.env.VOYAGE_API_KEY,
   model,
   dimensions,
+  inputType = "document",
   fetchImpl = fetch,
   timeoutMs = 15_000,
   batchSize = 100,
@@ -18,6 +21,12 @@ const createVoyageEmbeddingProvider = ({
 
   if (!Number.isSafeInteger(dimensions) || dimensions < 1) {
     throw new RangeError("Dimensions must be a positive integer.");
+  }
+
+  if (!SUPPORTED_INPUT_TYPES.includes(inputType)) {
+    throw new TypeError(
+      `inputType must be one of: ${SUPPORTED_INPUT_TYPES.join(", ")}.`,
+    );
   }
 
   if (typeof fetchImpl !== "function") {
@@ -42,7 +51,7 @@ const createVoyageEmbeddingProvider = ({
       const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
       try {
-        const response = await fetchImpl(VOYAGE_EMBEDDINGS_URL, {  
+        const response = await fetchImpl(VOYAGE_EMBEDDINGS_URL, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${apiKey}`,
@@ -51,7 +60,7 @@ const createVoyageEmbeddingProvider = ({
           body: JSON.stringify({
             input: batch,
             model,
-            input_type: "document",
+            input_type: inputType,
             output_dimension: dimensions,
             output_dtype: "float",
             truncation: false,

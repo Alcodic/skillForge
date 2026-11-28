@@ -5,6 +5,7 @@ import { createVoyageEmbeddingProvider } from "./voyageEmbeddingProvider.js";
 const createConfiguredEmbeddingService = ({
   env = process.env,
   fetchImpl = fetch,
+  inputType = "document",
 } = {}) => {
   // 1. Read and validate the application's embedding configuration.
   const config = getEmbeddingConfig(env);
@@ -19,6 +20,7 @@ const createConfiguredEmbeddingService = ({
     apiKey: env.VOYAGE_API_KEY,
     model: config.model,
     dimensions: config.dimensions,
+    inputType,
     fetchImpl,
   });
 

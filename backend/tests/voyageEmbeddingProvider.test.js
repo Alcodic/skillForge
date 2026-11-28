@@ -1,4 +1,3 @@
-
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -48,10 +47,7 @@ test("sends the expected request and returns embeddings", async () => {
     [0.4, 0.5, 0.6],
   ]);
 
-  assert.equal(
-    capturedRequest.url,
-    "https://api.voyageai.com/v1/embeddings",
-  );
+  assert.equal(capturedRequest.url, "https://api.voyageai.com/v1/embeddings");
 
   assert.equal(capturedRequest.options.method, "POST");
 
@@ -68,6 +64,31 @@ test("sends the expected request and returns embeddings", async () => {
     output_dtype: "float",
     truncation: false,
   });
+});
+
+test("sends query input type when configured", async () => {
+  let capturedRequest;
+
+  const generateEmbeddings = createTestProvider({
+    inputType: "query",
+    fetchImpl: async (_url, options) => {
+      capturedRequest = JSON.parse(options.body);
+
+      return createResponse([createEmbedding(0, [0.1, 0.2, 0.3])]);
+    },
+  });
+
+  const result = await generateEmbeddings(["What is RAG?"]);
+
+  assert.deepEqual(result, [[0.1, 0.2, 0.3]]);
+  assert.equal(capturedRequest.input_type, "query");
+});
+
+test("rejects unsupported input types", () => {
+  assert.throws(
+    () => createTestProvider({ inputType: "invalid" }),
+    /inputType must be one of: document, query/i,
+  );
 });
 
 test("preserves input order when API results arrive out of order", async () => {
@@ -104,10 +125,7 @@ test("returns an empty array without making an API request", async () => {
 });
 
 test("rejects missing API credentials", () => {
-  assert.throws(
-    () => createTestProvider({ apiKey: "" }),
-    /VOYAGE_API_KEY/,
-  );
+  assert.throws(() => createTestProvider({ apiKey: "" }), /VOYAGE_API_KEY/);
 });
 
 test("rejects invalid model configuration", () => {
@@ -161,8 +179,7 @@ test("rejects invalid embedding indices", async () => {
 
 test("rejects embedding vectors with incorrect dimensions", async () => {
   const generateEmbeddings = createTestProvider({
-    fetchImpl: async () =>
-      createResponse([createEmbedding(0, [0.1, 0.2])]),
+    fetchImpl: async () => createResponse([createEmbedding(0, [0.1, 0.2])]),
   });
 
   await assert.rejects(
@@ -188,10 +205,7 @@ test("rejects unsuccessful API responses", async () => {
     fetchImpl: async () => createResponse([], 429),
   });
 
-  await assert.rejects(
-    generateEmbeddings(["Some text"]),
-    /HTTP 429/,
-  );
+  await assert.rejects(generateEmbeddings(["Some text"]), /HTTP 429/);
 });
 
 test("splits large input into batches and preserves overall order", async () => {
@@ -220,10 +234,7 @@ test("splits large input into batches and preserves overall order", async () => 
   const texts = ["Text 0", "Text 1", "Text 2"];
   const result = await generateEmbeddings(texts);
 
-  assert.deepEqual(receivedBatches, [
-    ["Text 0", "Text 1"],
-    ["Text 2"],
-  ]);
+  assert.deepEqual(receivedBatches, [["Text 0", "Text 1"], ["Text 2"]]);
 
   assert.deepEqual(result, [
     [0, 0.1, 0.2],
@@ -245,8 +256,5 @@ test("rejects requests that time out", async () => {
       }),
   });
 
-  await assert.rejects(
-    generateEmbeddings(["Some text"]),
-    /timed out/i,
-  );
+  await assert.rejects(generateEmbeddings(["Some text"]), /timed out/i);
 });
