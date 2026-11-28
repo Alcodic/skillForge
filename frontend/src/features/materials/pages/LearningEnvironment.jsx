@@ -3,6 +3,24 @@ import { useParams } from "react-router-dom";
 
 import { getMaterialById, getMaterialReader } from "../api/materialsApi";
 
+const getSourcePageLabel = (source) => {
+  const { pageStart, pageEnd } = source ?? {};
+
+  if (!Number.isInteger(pageStart) || pageStart < 1) {
+    return null;
+  }
+
+  if (pageEnd === undefined || pageEnd === null || pageEnd === pageStart) {
+    return `Page ${pageStart}`;
+  }
+
+  if (!Number.isInteger(pageEnd) || pageEnd < pageStart) {
+    return `Page ${pageStart}`;
+  }
+
+  return `Pages ${pageStart}–${pageEnd}`;
+};
+
 function LearningEnvironment() {
   const { materialId } = useParams();
 
@@ -129,16 +147,26 @@ function LearningEnvironment() {
 
           {chunks.length > 0 && (
             <div className="mt-6 space-y-5">
-              {chunks.map((chunk) => (
-                <article
-                  key={chunk.chunkId}
-                  className="rounded-lg border border-border p-5"
-                >
-                  <p className="whitespace-pre-wrap leading-7 text-foreground">
-                    {chunk.text}
-                  </p>
-                </article>
-              ))}
+              {chunks.map((chunk) => {
+                const sourcePageLabel = getSourcePageLabel(chunk.source);
+
+                return (
+                  <article
+                    key={chunk.chunkId}
+                    className="rounded-lg border border-border p-5"
+                  >
+                    {sourcePageLabel && (
+                      <p className="mb-3 text-xs font-medium text-muted-foreground">
+                        {sourcePageLabel}
+                      </p>
+                    )}
+
+                    <p className="whitespace-pre-wrap leading-7 text-foreground">
+                      {chunk.text}
+                    </p>
+                  </article>
+                );
+              })}
             </div>
           )}
 
